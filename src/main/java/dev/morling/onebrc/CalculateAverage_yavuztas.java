@@ -161,18 +161,23 @@ public class CalculateAverage_yavuztas {
         }
     }
 
-    // Inspired by @spullara - customized hashmap on purpose
-    // Currently, it turned into a static helper class to utilize map operations
-    // The Recrod array is stored in RegionActor for faster access
-    private static final class RecordMap {
+    // One actor for one thread, no synchronization
+    private static final class RegionActor extends Thread {
 
         // Bigger bucket size less collisions, but you have to find a sweet spot otherwise it is becoming slower.
         // Also works good enough for 10K stations
         private static final int SIZE = 1 << 14; // 16kb - enough for 10K
         private static final int BITMASK = SIZE - 1;
-        // private final Record[] keys = new Record[SIZE];
 
-        // int collision;
+        private final long startPos; // start of region memory address
+        private final int size;
+
+        private Record[] aggregations;
+
+        public RegionActor(long startPos, int size) {
+            this.startPos = startPos;
+            this.size = size;
+        }
 
         private static boolean hasNoRecord(Record[] records, int index) {
             return records[index] == null;
@@ -258,23 +263,6 @@ public class CalculateAverage_yavuztas {
             forEach(other, key -> putOrMerge(records, key));
         }
 
-    }
-
-    // One actor for one thread, no synchronization
-    private static final class RegionActor extends Thread {
-
-        private final long startPos; // start of region memory address
-        private final int size;
-
-        // private final RecordMap map = new RecordMap();
-
-        private Record[] aggregations;
-
-        public RegionActor(long startPos, int size) {
-            this.startPos = startPos;
-            this.size = size;
-        }
-
         private static long getWord(long address) {
             return UNSAFE.getLong(address);
         }
@@ -301,7 +289,7 @@ public class CalculateAverage_yavuztas {
         public void run() {
 
             // local vars is faster than field access, so we carried record array here
-            final Record[] records = new Record[RecordMap.SIZE];
+            final Record[] records = new Record[SIZE];
 
             long pointer = this.startPos;
             final long size = pointer + this.size;
@@ -318,7 +306,7 @@ public class CalculateAverage_yavuztas {
                     final int temp = convertIntoNumber(decimalPos, numberWord);
 
                     word1 = partial(word1, pos); // last word
-                    RecordMap.putAndCollect(records, completeHash(hash, word1), temp, pointer, pos, word1, 0, 0);
+                    putAndCollect(records, completeHash(hash, word1), temp, pointer, pos, word1, 0, 0);
 
                     pointer += pos + (decimalPos >>> 3) + 4;
                 }
@@ -333,7 +321,7 @@ public class CalculateAverage_yavuztas {
                         final int temp = convertIntoNumber(decimalPos, numberWord);
 
                         word2 = partial(word2, pos); // last word
-                        RecordMap.putAndCollect(records, completeHash(hash, word1, word2), temp, pointer, length, word1, word2, 0);
+                        putAndCollect(records, completeHash(hash, word1, word2), temp, pointer, length, word1, word2, 0);
 
                         pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                     }
@@ -360,7 +348,7 @@ public class CalculateAverage_yavuztas {
                         final int temp = convertIntoNumber(decimalPos, numberWord);
 
                         word = partial(word, pos); // last word
-                        RecordMap.putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
+                        putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
 
                         pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                     }
@@ -495,14 +483,14 @@ public class CalculateAverage_yavuztas {
             actor.join(); // blocks until we get the result from thread
         }
 
-        final Record[] output = new Record[RecordMap.SIZE];
+        final Record[] output = new Record[RegionActor.SIZE];
         for (RegionActor actor : actors) {
-            RecordMap.merge(output, actor.aggregations); // merge all
+            RegionActor.merge(output, actor.aggregations); // merge all
         }
 
         // sort and print the result
         final TreeMap<String, String> sorted = new TreeMap<>();
-        RecordMap.forEach(output,
+        RegionActor.forEach(output,
                 key -> sorted.put(key.toString(), key.measurements()));
         System.out.println(sorted);
         System.out.close(); // closing the stream will trigger the main process to pick up the output early
