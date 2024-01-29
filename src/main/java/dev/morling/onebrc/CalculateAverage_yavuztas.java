@@ -293,7 +293,8 @@ public class CalculateAverage_yavuztas {
 
             long pointer = this.startPos;
             final long size = pointer + this.size;
-            while (pointer < size) { // line start
+            while (pointer < size) {
+
                 long hash = 0; // reset hash
                 long s; // semicolon check word
                 final int pos; // semicolon position
@@ -353,6 +354,7 @@ public class CalculateAverage_yavuztas {
                         pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                     }
                 }
+
             }
 
             this.aggregations = records; // to expose records after the job is done
@@ -448,7 +450,7 @@ public class CalculateAverage_yavuztas {
             return;
         }
 
-        var concurrency = 2 * Runtime.getRuntime().availableProcessors();
+        var concurrency = Runtime.getRuntime().availableProcessors();
         final long fileSize = Files.size(FILE);
         long regionSize = fileSize / concurrency;
 
