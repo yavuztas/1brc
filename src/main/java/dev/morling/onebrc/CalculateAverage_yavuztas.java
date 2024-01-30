@@ -166,25 +166,21 @@ public class CalculateAverage_yavuztas {
     }
 
     // One actor for one thread, no synchronization
-    private static final class RegionProcessor extends Thread {
+    // Region processor for a single region
+    private static class RegionProcessor extends Thread {
 
         // Bigger bucket size less collisions, but you have to find a sweet spot otherwise it is becoming slower.
         // Also works good enough for 10K stations
-        private static final int SIZE = 1 << 14; // 16kb - enough for 10K
-        private static final int BITMASK = SIZE - 1;
+        static final int SIZE = 1 << 14; // 16kb - enough for 10K
+        static final int BITMASK = SIZE - 1;
+        static final int MAX_INNER_LOOP_SIZE = 11;
 
-        private static final int MAX_INNER_LOOP_SIZE = 11;
+        final Region region;
 
-        private final Region region1;
-        private final Region region2;
-        private final Region region3;
+        Record[] aggregations;
 
-        private Record[] aggregations;
-
-        public RegionProcessor(Region region1, Region region2, Region region3) {
-            this.region1 = region1;
-            this.region2 = region2;
-            this.region3 = region3;
+        public RegionProcessor(Region region) {
+            this.region = region;
         }
 
         @Override
@@ -192,35 +188,34 @@ public class CalculateAverage_yavuztas {
             // local vars is faster than field access, so we carried record array here
             final Record[] records = new Record[SIZE];
 
-            long pointer = this.region1.start;
-            final long limit = pointer + this.region1.size;
-            while (pointer < limit) {
+            // process single region
+            long totalRead = 0;
+            long pointer1 = this.region.start;
+            final long limit = this.region.size;
+            while (totalRead < limit) {
                 long s; // semicolon check word
-                final long word1 = getWord(pointer);
+                final long word1 = getWord(pointer1);
                 if ((s = hasSemicolon(word1)) != 0) {
-                    pointer = processWord1(records, s, pointer, word1);
+                    final long read = processWord1(records, s, pointer1, word1);
+                    totalRead += read;
+                    pointer1 += read;
                 }
                 else {
-                    final long word2 = getWord(pointer + 8);
+                    final long word2 = getWord(pointer1 + 8);
                     if ((s = hasSemicolon(word2)) != 0) {
-                        pointer = processWord2(records, s, pointer, word2, word1);
+                        final long read = processWord2(records, s, pointer1, word2, word1);
+                        totalRead += read;
+                        pointer1 += read;
                     }
                     else {
-                        pointer = processRest(records, word1, word2, s, pointer);
+                        final long read = processRest(records, word1, word2, s, pointer1);
+                        totalRead += read;
+                        pointer1 += read;
                     }
                 }
-
             }
 
-//            processRegion(this.region1.start, this.region1.size, records);
-            // processRegion(this.region2.start, this.region2.size, records);
-            // processRegion(this.region3.start, this.region3.size, records);
-
             this.aggregations = records; // to expose records after the job is done
-        }
-
-        private static void processRegion(long start, int size, Record[] records) {
-
         }
 
         private static long processRest(Record[] records, long word1, long word2, long s, long pointer) {
@@ -250,8 +245,7 @@ public class CalculateAverage_yavuztas {
             word = partial(word, pos); // last word
             putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
 
-            pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
-            return pointer;
+            return length + (decimalPos >>> 3) + 4; // seek to the line end
         }
 
         private static long processWord2(Record[] records, long s, long pointer, long word2, long word1) {
@@ -266,8 +260,7 @@ public class CalculateAverage_yavuztas {
             word2 = partial(word2, pos); // last word
             putAndCollect(records, completeHash(0, word1, word2), temp, pointer, length, word1, word2, 0);
 
-            pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
-            return pointer;
+            return length + (decimalPos >>> 3) + 4; // seek to the line end
         }
 
         private static long processWord1(Record[] records, long s, long pointer, long word1) {
@@ -281,8 +274,316 @@ public class CalculateAverage_yavuztas {
             word1 = partial(word1, pos); // last word
             putAndCollect(records, completeHash(0, word1), temp, pointer, pos, word1, 0, 0);
 
-            pointer += pos + (decimalPos >>> 3) + 4;
-            return pointer;
+            return pos + (decimalPos >>> 3) + 4;
+        }
+
+        private static boolean hasNoRecord(Record[] records, int index) {
+            return records[index] == null;
+        }
+
+        private static int hashBucket(int hash) {
+            hash = hash ^ (hash >>> 16); // naive bit spreading but surprisingly decreases collision :)
+            return hash & BITMASK; // fast modulo, to find bucket
+        }
+
+        private static void putAndCollect(Record[] records, int hash, int temp, long start, int length, long word1, long word2, long wordLast) {
+            final int bucket = hashBucket(hash);
+            if (hasNoRecord(records, bucket)) {
+                records[bucket] = new Record(start, length, word1, word2, wordLast, hash, temp);
+                return;
+            }
+
+            Record existing = records[bucket];
+            if (existing.equals(start, word1, word2, wordLast, length)) {
+                existing.collect(temp);
+                return;
+            }
+
+            // collision++;
+            // find possible slot by scanning the slot linked list
+            while (existing.next != null) {
+                if (existing.next.equals(start, word1, word2, wordLast, length)) {
+                    existing.next.collect(temp);
+                    return;
+                }
+                existing = existing.next; // go on to next
+                // collision++;
+            }
+            existing.next = new Record(start, length, word1, word2, wordLast, hash, temp);
+        }
+
+        private static void putOrMerge(Record[] records, Record key) {
+            final int bucket = hashBucket(key.hash);
+            if (hasNoRecord(records, bucket)) {
+                key.next = null;
+                records[bucket] = key;
+                return;
+            }
+
+            Record existing = records[bucket];
+            if (existing.equals(key)) {
+                existing.merge(key);
+                return;
+            }
+
+            // collision++;
+            // find possible slot by scanning the slot linked list
+            while (existing.next != null) {
+                if (existing.next.equals(key)) {
+                    existing.next.merge(key);
+                    return;
+                }
+                existing = existing.next; // go on to next
+                // collision++;
+            }
+            key.next = null;
+            existing.next = key;
+        }
+
+        private static void forEach(Record[] records, Consumer<Record> consumer) {
+            int pos = 0;
+            Record key;
+            while (pos < SIZE) {
+                if ((key = records[pos++]) == null) {
+                    continue;
+                }
+                Record next = key.next;
+                consumer.accept(key);
+                while (next != null) { // also traverse the records in the collision list
+                    final Record tmp = next.next;
+                    consumer.accept(next);
+                    next = tmp;
+                }
+            }
+        }
+
+        private static void merge(Record[] records, Record[] other) {
+            forEach(other, key -> putOrMerge(records, key));
+        }
+
+        private static long getWord(long address) {
+            return UNSAFE.getLong(address);
+        }
+
+        // hasvalue & haszero
+        // adapted from https://graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
+        private static long hasSemicolon(long word) {
+            // semicolon pattern
+            final long hasVal = word ^ 0x3B3B3B3B3B3B3B3BL; // hasvalue
+            return ((hasVal - 0x0101010101010101L) & ~hasVal & 0x8080808080808080L); // haszero
+        }
+
+        private static int semicolonPos(long hasVal) {
+            return Long.numberOfTrailingZeros(hasVal) >>> 3;
+        }
+
+        private static int decimalPos(long numberWord) {
+            return Long.numberOfTrailingZeros(~numberWord & 0x10101000);
+        }
+
+        // Hashes are calculated by a Mersenne Prime (1 << 7) -1
+        // This is faster than multiplication in some machines
+        private static long appendHash(long hash, long word) {
+            return (hash << 7) - hash + word;
+        }
+
+        private static long appendHash(long hash, long word1, long word2) {
+            hash = (hash << 7) - hash + word1;
+            return (hash << 7) - hash + word2;
+        }
+
+        private static int completeHash(long hash, long partial) {
+            hash = (hash << 7) - hash + partial;
+            return (int) (hash ^ (hash >>> 25));
+        }
+
+        private static int completeHash(long hash, long word1, long word2) {
+            hash = (hash << 7) - hash + word1;
+            hash = (hash << 7) - hash + word2;
+            return (int) hash ^ (int) (hash >>> 25);
+        }
+
+        // Credits to @merrykitty. Magical solution to parse temparature values branchless!
+        // Taken as without modification, comments belong to @merrykitty
+        private static int convertIntoNumber(int decimalSepPos, long numberWord) {
+            final int shift = 28 - decimalSepPos;
+            // signed is -1 if negative, 0 otherwise
+            final long signed = (~numberWord << 59) >> 63;
+            final long designMask = ~(signed & 0xFF);
+            // Align the number to a specific position and transform the ascii code
+            // to actual digit value in each byte
+            final long digits = ((numberWord & designMask) << shift) & 0x0F000F0F00L;
+            // Now digits is in the form 0xUU00TTHH00 (UU: units digit, TT: tens digit, HH: hundreds digit)
+            // 0xUU00TTHH00 * (100 * 0x1000000 + 10 * 0x10000 + 1) =
+            // 0x000000UU00TTHH00 +
+            // 0x00UU00TTHH000000 * 10 +
+            // 0xUU00TTHH00000000 * 100
+            // Now TT * 100 has 2 trailing zeroes and HH * 100 + TT * 10 + UU < 0x400
+            // This results in our value lies in the bit 32 to 41 of this product
+            // That was close :)
+            final long absValue = ((digits * 0x640a0001) >>> 32) & 0x3FF;
+            final long value = (absValue ^ signed) - signed;
+            return (int) value;
+        }
+
+    }
+
+    private static final class MultiRegionProcessor extends RegionProcessor {
+
+        private final Region region2;
+        private final Region region3;
+
+        public MultiRegionProcessor(Region region, Region region2, Region region3) {
+            super(region);
+            this.region2 = region2;
+            this.region3 = region3;
+        }
+
+        @Override
+        public void run() {
+            // local vars is faster than field access, so we carried record array here
+            final Record[] records = new Record[SIZE];
+
+            long pointer1 = this.region.start;
+            long pointer2 = this.region2.start;
+            long pointer3 = this.region3.start;
+
+            long pointer3Limit = this.region3.start + this.region3.size;
+
+            long totalRead = 0;
+            final long limit = this.region.size + this.region2.size + this.region3.size;
+            while (totalRead < limit) {
+                // region 1
+                long s; // semicolon check word
+                final long word1 = getWord(pointer1);
+                if ((s = hasSemicolon(word1)) != 0) {
+                    long read = processWord1(records, s, pointer1, word1);
+                    totalRead += read;
+                    pointer1 += read;
+                }
+                else {
+                    final long word2 = getWord(pointer1 + 8);
+                    if ((s = hasSemicolon(word2)) != 0) {
+                        long read = processWord2(records, s, pointer1, word2, word1);
+                        totalRead += read;
+                        pointer1 += read;
+                    }
+                    else {
+                        long read = processRest(records, word1, word2, s, pointer1);
+                        totalRead += read;
+                        pointer1 += read;
+                    }
+                }
+
+                // region 2
+                long s2;
+                final long word12 = getWord(pointer2);
+                if ((s2 = hasSemicolon(word12)) != 0) {
+                    long read = processWord1(records, s2, pointer2, word12);
+                    totalRead += read;
+                    pointer2 += read;
+                }
+                else {
+                    final long word2 = getWord(pointer2 + 8);
+                    if ((s2 = hasSemicolon(word2)) != 0) {
+                        long read = processWord2(records, s2, pointer2, word2, word12);
+                        totalRead += read;
+                        pointer2 += read;
+                    }
+                    else {
+                        long read = processRest(records, word12, word2, s2, pointer2);
+                        totalRead += read;
+                        pointer2 += read;
+                    }
+                }
+
+                // region 3
+                if (pointer3 + 8 > pointer3Limit) {
+                    break;
+                }
+
+                long s3;
+                final long word13 = getWord(pointer3);
+                if ((s3 = hasSemicolon(word13)) != 0) {
+                    final long read = processWord1(records, s3, pointer3, word13);
+                    totalRead += read;
+                    pointer3 += read;
+                }
+                else {
+                    final long word2 = getWord(pointer3 + 8);
+                    if ((s3 = hasSemicolon(word2)) != 0) {
+                        final long read = processWord2(records, s3, pointer3, word2, word13);
+                        totalRead += read;
+                        pointer3 += read;
+                    }
+                    else {
+                        final long read = processRest(records, word13, word2, s3, pointer3);
+                        totalRead += read;
+                        pointer3 += read;
+                    }
+                }
+            }
+
+            this.aggregations = records; // to expose records after the job is done
+        }
+
+        private static long processRest(Record[] records, long word1, long word2, long s, long pointer) {
+
+            final int pos;
+            long word = 0;
+            int length = 16;
+            long hash = appendHash(0, word1, word2);
+            // Let the compiler know the loop size ahead
+            // Then it's automatically unrolled
+            // Max key length is 13 longs, 2 we've read before, 11 left
+            for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                if ((s = hasSemicolon((word = getWord(pointer + length)))) != 0) {
+                    break;
+                }
+                hash = appendHash(hash, word);
+                length += 8;
+            }
+
+            pos = semicolonPos(s);
+            length += pos;
+            // read temparature
+            final long numberWord = getWord(pointer + length + 1);
+            final int decimalPos = decimalPos(numberWord);
+            final int temp = convertIntoNumber(decimalPos, numberWord);
+
+            word = partial(word, pos); // last word
+            putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
+
+            return length + (decimalPos >>> 3) + 4; // seek to the line end
+        }
+
+        private static long processWord2(Record[] records, long s, long pointer, long word2, long word1) {
+            final int pos;
+            pos = semicolonPos(s);
+            // read temparature
+            final int length = pos + 8;
+            final long numberWord = getWord(pointer + length + 1);
+            final int decimalPos = decimalPos(numberWord);
+            final int temp = convertIntoNumber(decimalPos, numberWord);
+
+            word2 = partial(word2, pos); // last word
+            putAndCollect(records, completeHash(0, word1, word2), temp, pointer, length, word1, word2, 0);
+
+            return length + (decimalPos >>> 3) + 4; // seek to the line end
+        }
+
+        private static long processWord1(Record[] records, long s, long pointer, long word1) {
+            final int pos;
+            pos = semicolonPos(s);
+            // read temparature
+            final long numberWord = getWord(pointer + pos + 1);
+            final int decimalPos = decimalPos(numberWord);
+            final int temp = convertIntoNumber(decimalPos, numberWord);
+
+            word1 = partial(word1, pos); // last word
+            putAndCollect(records, completeHash(0, word1), temp, pointer, pos, word1, 0, 0);
+
+            return pos + (decimalPos >>> 3) + 4;
         }
 
         private static boolean hasNoRecord(Record[] records, int index) {
@@ -474,22 +775,28 @@ public class CalculateAverage_yavuztas {
 
         // Dased on @thomaswue's idea, to cut unmapping delay.
         // Strangely, unmapping delay doesn't occur on macOS/M1 however in Linux/AMD it's substantial - ~200ms
-        if (!isWorkerProcess(args)) {
-            runAsWorker();
-            return;
-        }
+        // if (!isWorkerProcess(args)) {
+        // runAsWorker();
+        // return;
+        // }
 
         var concurrency = Runtime.getRuntime().availableProcessors();
+
         final long fileSize = Files.size(FILE);
-        long regionSize = fileSize / concurrency;
+        int regionPerThread = 3;
+        int regionCount = regionPerThread * concurrency;
+        long regionSize = fileSize / regionCount;
 
         // handling extreme cases
         while (regionSize > Integer.MAX_VALUE) {
             concurrency *= 2;
+            regionCount *= 2;
             regionSize /= 2;
         }
         if (fileSize <= 1 << 20) { // small file (1mb), no need concurrency
             concurrency = 1;
+            regionPerThread = 1;
+            regionCount = 1;
             regionSize = fileSize;
         }
 
@@ -498,7 +805,6 @@ public class CalculateAverage_yavuztas {
         // get the memory address, this is the only thing we need for Unsafe
         final long memoryAddress = channel.map(FileChannel.MapMode.READ_ONLY, startPos, fileSize, Arena.global()).address();
 
-        final int regionCount = 1 * concurrency;
         final Region[] regions = new Region[regionCount];
         for (int i = 0; i < regionCount; i++) {
             // calculate boundaries
@@ -512,8 +818,13 @@ public class CalculateAverage_yavuztas {
 
         final RegionProcessor[] actors = new RegionProcessor[concurrency];
         for (int i = 0; i < concurrency; i++) {
-            // final RegionProcessor actor = new RegionProcessor(regions[3 * i], regions[3 * i + 1], regions[3 * i + 2]);
-            final RegionProcessor actor = new RegionProcessor(regions[i], null, null);
+            final RegionProcessor actor;
+            if (regionPerThread == 1) {
+                actor = new RegionProcessor(regions[i]);
+            }
+            else { // 3 regions per processor
+                actor = new MultiRegionProcessor(regions[3 * i], regions[3 * i + 1], regions[3 * i + 2]);
+            }
             actor.start(); // start imeediately
             actors[i] = actor;
         }
