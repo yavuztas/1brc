@@ -218,7 +218,7 @@ public class CalculateAverage_yavuztas {
             this.aggregations = records; // to expose records after the job is done
         }
 
-        static long processRest(Record[] records, long word1, long word2, long s, long pointer) {
+        static int processRest(Record[] records, long word1, long word2, long s, long pointer) {
             final int pos;
             long word = 0;
             int length = 16;
@@ -247,7 +247,7 @@ public class CalculateAverage_yavuztas {
             return length + (decimalPos >>> 3) + 4; // seek to the line end
         }
 
-        static long processWord2(Record[] records, long s, long pointer, long word2, long word1) {
+        static int processWord2(Record[] records, long s, long pointer, long word2, long word1) {
             final int pos;
             pos = semicolonPos(s);
             // read temparature
@@ -262,7 +262,7 @@ public class CalculateAverage_yavuztas {
             return length + (decimalPos >>> 3) + 4; // seek to the line end
         }
 
-        static long processWord1(Record[] records, long s, long pointer, long word1) {
+        static int processWord1(Record[] records, long s, long pointer, long word1) {
             final int pos;
             pos = semicolonPos(s);
             // read temparature
@@ -528,82 +528,44 @@ public class CalculateAverage_yavuztas {
             final long limit2 = this.region2.start + this.region2.size;
             final long limit3 = this.region3.start + this.region3.size;
 
-            long word1;
-            long semicolon; // semicolon check word
+            int read;
             long totalRead = 0;
             final long limit = this.region.size + this.region2.size + this.region3.size;
             while (totalRead < limit) {
-                // region 1
-                if (pointer1 < limit1) { // region size check
-                    word1 = getWord(pointer1);
-                    if ((semicolon = hasSemicolon(word1)) != 0) {
-                        final long read = processWord1(records, semicolon, pointer1, word1);
-                        totalRead += read;
-                        pointer1 += read;
-                    }
-                    else {
-                        final long word2 = getWord(pointer1 + 8);
-                        if ((semicolon = hasSemicolon(word2)) != 0) {
-                            final long read = processWord2(records, semicolon, pointer1, word2, word1);
-                            totalRead += read;
-                            pointer1 += read;
-                        }
-                        else {
-                            final long read = processRest(records, word1, word2, semicolon, pointer1);
-                            totalRead += read;
-                            pointer1 += read;
-                        }
-                    }
-                }
+                read = processRegion(pointer1, limit1, records);
+                totalRead += read;
+                pointer1 += read;
 
-                // region 2
-                if (pointer2 < limit2) { // region size check
-                    word1 = getWord(pointer2);
-                    if ((semicolon = hasSemicolon(word1)) != 0) {
-                        final long read = processWord1(records, semicolon, pointer2, word1);
-                        totalRead += read;
-                        pointer2 += read;
-                    }
-                    else {
-                        final long word2 = getWord(pointer2 + 8);
-                        if ((semicolon = hasSemicolon(word2)) != 0) {
-                            final long read = processWord2(records, semicolon, pointer2, word2, word1);
-                            totalRead += read;
-                            pointer2 += read;
-                        }
-                        else {
-                            final long read = processRest(records, word1, word2, semicolon, pointer2);
-                            totalRead += read;
-                            pointer2 += read;
-                        }
-                    }
-                }
+                read = processRegion(pointer2, limit2, records);
+                totalRead += read;
+                pointer2 += read;
 
-                // region 3
-                if (pointer3 < limit3) { // region size check
-                    word1 = getWord(pointer3);
-                    if ((semicolon = hasSemicolon(word1)) != 0) {
-                        final long read = processWord1(records, semicolon, pointer3, word1);
-                        totalRead += read;
-                        pointer3 += read;
-                    }
-                    else {
-                        final long word2 = getWord(pointer3 + 8);
-                        if ((semicolon = hasSemicolon(word2)) != 0) {
-                            final long read = processWord2(records, semicolon, pointer3, word2, word1);
-                            totalRead += read;
-                            pointer3 += read;
-                        }
-                        else {
-                            final long read = processRest(records, word1, word2, semicolon, pointer3);
-                            totalRead += read;
-                            pointer3 += read;
-                        }
-                    }
-                }
+                read = processRegion(pointer3, limit3, records);
+                totalRead += read;
+                pointer3 += read;
             }
 
             this.aggregations = records; // to expose records after the job is done
+        }
+
+        private static int processRegion(long pointer, long limit, Record[] records) {
+            if (pointer < limit) { // region size check
+                long semicolon; // semicolon check word
+                final long word1 = getWord(pointer);
+                if ((semicolon = hasSemicolon(word1)) != 0) {
+                    return processWord1(records, semicolon, pointer, word1);
+                }
+                else {
+                    final long word2 = getWord(pointer + 8);
+                    if ((semicolon = hasSemicolon(word2)) != 0) {
+                        return processWord2(records, semicolon, pointer, word2, word1);
+                    }
+                    else {
+                        return processRest(records, word1, word2, semicolon, pointer);
+                    }
+                }
+            }
+            return 0;
         }
 
     }
