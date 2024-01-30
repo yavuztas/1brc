@@ -775,10 +775,10 @@ public class CalculateAverage_yavuztas {
 
         // Dased on @thomaswue's idea, to cut unmapping delay.
         // Strangely, unmapping delay doesn't occur on macOS/M1 however in Linux/AMD it's substantial - ~200ms
-        // if (!isWorkerProcess(args)) {
-        // runAsWorker();
-        // return;
-        // }
+        if (!isWorkerProcess(args)) {
+            runAsWorker();
+            return;
+        }
 
         var concurrency = Runtime.getRuntime().availableProcessors();
 
