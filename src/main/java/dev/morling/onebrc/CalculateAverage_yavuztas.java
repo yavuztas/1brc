@@ -651,7 +651,7 @@ public class CalculateAverage_yavuztas {
             return;
         }
 
-        var concurrency = Runtime.getRuntime().availableProcessors();
+        var concurrency = 2 * Runtime.getRuntime().availableProcessors();
 
         final long fileSize = Files.size(FILE);
         int regionPerThread = 3;
