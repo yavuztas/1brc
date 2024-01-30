@@ -161,22 +161,110 @@ public class CalculateAverage_yavuztas {
         }
     }
 
+    private record Region(long start, int size) {
+
+    }
+
     // One actor for one thread, no synchronization
-    private static final class RegionActor extends Thread {
+    private static final class RegionProcessor extends Thread {
 
         // Bigger bucket size less collisions, but you have to find a sweet spot otherwise it is becoming slower.
         // Also works good enough for 10K stations
         private static final int SIZE = 1 << 14; // 16kb - enough for 10K
         private static final int BITMASK = SIZE - 1;
 
-        private final long startPos; // start of region memory address
-        private final int size;
+        private static final int MAX_INNER_LOOP_SIZE = 11;
+
+        private final Region region1;
+        private final Region region2;
+        private final Region region3;
 
         private Record[] aggregations;
 
-        public RegionActor(long startPos, int size) {
-            this.startPos = startPos;
-            this.size = size;
+        public RegionProcessor(Region region1, Region region2, Region region3) {
+            this.region1 = region1;
+            this.region2 = region2;
+            this.region3 = region3;
+        }
+
+        @Override
+        public void run() {
+            // local vars is faster than field access, so we carried record array here
+            final Record[] records = new Record[SIZE];
+
+            processRegion(this.region1.start, this.region1.size, records);
+            // processRegion(this.region2.start, this.region2.size, records);
+            // processRegion(this.region3.start, this.region3.size, records);
+
+            this.aggregations = records; // to expose records after the job is done
+        }
+
+        private static void processRegion(long start, int size, Record[] records) {
+            long pointer = start;
+            final long limit = pointer + size;
+            while (pointer < limit) {
+
+                long hash = 0; // reset hash
+                long s; // semicolon check word
+                final int pos; // semicolon position
+                long word1 = getWord(pointer);
+                if ((s = hasSemicolon(word1)) != 0) {
+                    pos = semicolonPos(s);
+                    // read temparature
+                    final long numberWord = getWord(pointer + pos + 1);
+                    final int decimalPos = decimalPos(numberWord);
+                    final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                    word1 = partial(word1, pos); // last word
+                    putAndCollect(records, completeHash(hash, word1), temp, pointer, pos, word1, 0, 0);
+
+                    pointer += pos + (decimalPos >>> 3) + 4;
+                }
+                else {
+                    long word2 = getWord(pointer + 8);
+                    if ((s = hasSemicolon(word2)) != 0) {
+                        pos = semicolonPos(s);
+                        // read temparature
+                        final int length = pos + 8;
+                        final long numberWord = getWord(pointer + length + 1);
+                        final int decimalPos = decimalPos(numberWord);
+                        final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                        word2 = partial(word2, pos); // last word
+                        putAndCollect(records, completeHash(hash, word1, word2), temp, pointer, length, word1, word2, 0);
+
+                        pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
+                    }
+                    else {
+                        long word = 0;
+                        int length = 16;
+                        hash = appendHash(hash, word1, word2);
+                        // Let the compiler know the loop size ahead
+                        // Then it's automatically unrolled
+                        // Max key length is 13 longs, 2 we've read before, 11 left
+                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                            if ((s = hasSemicolon((word = getWord(pointer + length)))) != 0) {
+                                break;
+                            }
+                            hash = appendHash(hash, word);
+                            length += 8;
+                        }
+
+                        pos = semicolonPos(s);
+                        length += pos;
+                        // read temparature
+                        final long numberWord = getWord(pointer + length + 1);
+                        final int decimalPos = decimalPos(numberWord);
+                        final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                        word = partial(word, pos); // last word
+                        putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
+
+                        pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
+                    }
+                }
+
+            }
         }
 
         private static boolean hasNoRecord(Record[] records, int index) {
@@ -281,89 +369,6 @@ public class CalculateAverage_yavuztas {
 
         private static int decimalPos(long numberWord) {
             return Long.numberOfTrailingZeros(~numberWord & 0x10101000);
-        }
-
-        private static final int MAX_INNER_LOOP_SIZE = 11;
-
-        @Override
-        public void run() {
-
-            // local vars is faster than field access, so we carried record array here
-            final Record[] records = new Record[SIZE];
-
-            long pointer = this.startPos;
-            final long size = pointer + this.size;
-            while (pointer < size) {
-                pointer += processLine(pointer, records);
-            }
-
-            this.aggregations = records; // to expose records after the job is done
-        }
-
-        private static long processLine(long lineStart, Record[] records) {
-
-            long processed = 0;
-
-            long hash = 0; // reset hash
-            long s; // semicolon check word
-            final int pos; // semicolon position
-            long word1 = getWord(lineStart);
-            if ((s = hasSemicolon(word1)) != 0) {
-                pos = semicolonPos(s);
-                // read temparature
-                final long numberWord = getWord(lineStart + pos + 1);
-                final int decimalPos = decimalPos(numberWord);
-                final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                word1 = partial(word1, pos); // last word
-                putAndCollect(records, completeHash(hash, word1), temp, lineStart, pos, word1, 0, 0);
-
-                processed += pos + (decimalPos >>> 3) + 4;
-            }
-            else {
-                long word2 = getWord(lineStart + 8);
-                if ((s = hasSemicolon(word2)) != 0) {
-                    pos = semicolonPos(s);
-                    // read temparature
-                    final int length = pos + 8;
-                    final long numberWord = getWord(lineStart + length + 1);
-                    final int decimalPos = decimalPos(numberWord);
-                    final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                    word2 = partial(word2, pos); // last word
-                    putAndCollect(records, completeHash(hash, word1, word2), temp, lineStart, length, word1, word2, 0);
-
-                    processed += length + (decimalPos >>> 3) + 4; // seek to the line end
-                }
-                else {
-                    long word = 0;
-                    int length = 16;
-                    hash = appendHash(hash, word1, word2);
-                    // Let the compiler know the loop size ahead
-                    // Then it's automatically unrolled
-                    // Max key length is 13 longs, 2 we've read before, 11 left
-                    for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                        if ((s = hasSemicolon((word = getWord(lineStart + length)))) != 0) {
-                            break;
-                        }
-                        hash = appendHash(hash, word);
-                        length += 8;
-                    }
-
-                    pos = semicolonPos(s);
-                    length += pos;
-                    // read temparature
-                    final long numberWord = getWord(lineStart + length + 1);
-                    final int decimalPos = decimalPos(numberWord);
-                    final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                    word = partial(word, pos); // last word
-                    putAndCollect(records, completeHash(hash, word), temp, lineStart, length, word1, word2, word);
-
-                    processed += length + (decimalPos >>> 3) + 4; // seek to the line end
-                }
-            }
-            return processed;
         }
 
         // Hashes are calculated by a Mersenne Prime (1 << 7) -1
@@ -475,30 +480,38 @@ public class CalculateAverage_yavuztas {
         // get the memory address, this is the only thing we need for Unsafe
         final long memoryAddress = channel.map(FileChannel.MapMode.READ_ONLY, startPos, fileSize, Arena.global()).address();
 
-        final RegionActor[] actors = new RegionActor[concurrency];
-        for (int i = 0; i < concurrency; i++) {
+        final int regionCount = 1 * concurrency;
+        final Region[] regions = new Region[regionCount];
+        for (int i = 0; i < regionCount; i++) {
             // calculate boundaries
             long maxSize = (startPos + regionSize > fileSize) ? fileSize - startPos : regionSize;
             // shift position to back until we find a linebreak
             maxSize = findClosestLineEnd(memoryAddress + startPos, (int) maxSize);
-            final RegionActor actor = new RegionActor(memoryAddress + startPos, (int) maxSize);
-            actor.start(); // start imeediately
-            actors[i] = actor;
+            regions[i] = new Region(memoryAddress + startPos, (int) maxSize);
+
             startPos += maxSize;
         }
 
-        for (RegionActor actor : actors) {
+        final RegionProcessor[] actors = new RegionProcessor[concurrency];
+        for (int i = 0; i < concurrency; i++) {
+            // final RegionProcessor actor = new RegionProcessor(regions[3 * i], regions[3 * i + 1], regions[3 * i + 2]);
+            final RegionProcessor actor = new RegionProcessor(regions[i], null, null);
+            actor.start(); // start imeediately
+            actors[i] = actor;
+        }
+
+        for (RegionProcessor actor : actors) {
             actor.join(); // blocks until we get the result from thread
         }
 
-        final Record[] output = new Record[RegionActor.SIZE];
-        for (RegionActor actor : actors) {
-            RegionActor.merge(output, actor.aggregations); // merge all
+        final Record[] output = new Record[RegionProcessor.SIZE];
+        for (RegionProcessor actor : actors) {
+            RegionProcessor.merge(output, actor.aggregations); // merge all
         }
 
         // sort and print the result
         final TreeMap<String, String> sorted = new TreeMap<>();
-        RegionActor.forEach(output,
+        RegionProcessor.forEach(output,
                 key -> sorted.put(key.toString(), key.measurements()));
         System.out.println(sorted);
         System.out.close(); // closing the stream will trigger the main process to pick up the output early
