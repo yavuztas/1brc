@@ -192,16 +192,8 @@ public class CalculateAverage_yavuztas {
             // local vars is faster than field access, so we carried record array here
             final Record[] records = new Record[SIZE];
 
-            processRegion(this.region1.start, this.region1.size, records);
-            // processRegion(this.region2.start, this.region2.size, records);
-            // processRegion(this.region3.start, this.region3.size, records);
-
-            this.aggregations = records; // to expose records after the job is done
-        }
-
-        private static void processRegion(long start, int size, Record[] records) {
-            long pointer = start;
-            final long limit = pointer + size;
+            long pointer = this.region1.start;
+            final long limit = pointer + this.region1.size;
             while (pointer < limit) {
                 long s; // semicolon check word
                 final long word1 = getWord(pointer);
@@ -219,6 +211,16 @@ public class CalculateAverage_yavuztas {
                 }
 
             }
+
+//            processRegion(this.region1.start, this.region1.size, records);
+            // processRegion(this.region2.start, this.region2.size, records);
+            // processRegion(this.region3.start, this.region3.size, records);
+
+            this.aggregations = records; // to expose records after the job is done
+        }
+
+        private static void processRegion(long start, int size, Record[] records) {
+
         }
 
         private static long processRest(Record[] records, long word1, long word2, long s, long pointer) {
