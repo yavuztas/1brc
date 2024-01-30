@@ -285,7 +285,7 @@ public class CalculateAverage_yavuztas {
             return hash & BITMASK; // fast modulo, to find bucket
         }
 
-        private static void putAndCollect(Record[] records, int hash, int temp, long start, int length, long word1, long word2, long wordLast) {
+        static void putAndCollect(Record[] records, int hash, int temp, long start, int length, long word1, long word2, long wordLast) {
             final int bucket = hashBucket(hash);
             if (hasNoRecord(records, bucket)) {
                 records[bucket] = new Record(start, length, word1, word2, wordLast, hash, temp);
@@ -372,31 +372,35 @@ public class CalculateAverage_yavuztas {
             return ((hasVal - 0x0101010101010101L) & ~hasVal & 0x8080808080808080L); // haszero
         }
 
-        private static int semicolonPos(long hasVal) {
+        static int semicolonPos(long hasVal) {
             return Long.numberOfTrailingZeros(hasVal) >>> 3;
         }
 
-        private static int decimalPos(long numberWord) {
+        static int decimalPos(long numberWord) {
             return Long.numberOfTrailingZeros(~numberWord & 0x10101000);
         }
 
         // Hashes are calculated by a Mersenne Prime (1 << 7) -1
         // This is faster than multiplication in some machines
-        private static long appendHash(long hash, long word) {
+        static long appendHash(long hash, long word) {
             return (hash << 7) - hash + word;
         }
 
-        private static long appendHash(long hash, long word1, long word2) {
+        static long appendHash(long hash, long word1, long word2) {
             hash = (hash << 7) - hash + word1;
             return (hash << 7) - hash + word2;
         }
 
-        private static int completeHash(long hash, long partial) {
+        static int completeHash(long partial) {
+            return (int) (partial ^ (partial >>> 25));
+        }
+
+        static int completeHash(long hash, long partial) {
             hash = (hash << 7) - hash + partial;
             return (int) (hash ^ (hash >>> 25));
         }
 
-        private static int completeHash(long hash, long word1, long word2) {
+        static int completeHash(long hash, long word1, long word2) {
             hash = (hash << 7) - hash + word1;
             hash = (hash << 7) - hash + word2;
             return (int) hash ^ (int) (hash >>> 25);
@@ -404,7 +408,7 @@ public class CalculateAverage_yavuztas {
 
         // Credits to @merrykitty. Magical solution to parse temparature values branchless!
         // Taken as without modification, comments belong to @merrykitty
-        private static int convertIntoNumber(int decimalSepPos, long numberWord) {
+        static int convertIntoNumber(int decimalSepPos, long numberWord) {
             final int shift = 28 - decimalSepPos;
             // signed is -1 if negative, 0 otherwise
             final long signed = (~numberWord << 59) >> 63;
@@ -553,15 +557,61 @@ public class CalculateAverage_yavuztas {
                 long semicolon; // semicolon check word
                 final long word1 = getWord(pointer);
                 if ((semicolon = hasSemicolon(word1)) != 0) {
-                    return processWord1(records, semicolon, pointer, word1);
+                    final int pos;
+                    pos = semicolonPos(semicolon);
+                    // read temparature
+                    final long numberWord = getWord(pointer + pos + 1);
+                    final int decimalPos = decimalPos(numberWord);
+                    final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                    final long word = partial(word1, pos); // last word
+                    putAndCollect(records, completeHash(word), temp, pointer, pos, word, 0, 0);
+
+                    return pos + (decimalPos >>> 3) + 4;
                 }
                 else {
                     final long word2 = getWord(pointer + 8);
                     if ((semicolon = hasSemicolon(word2)) != 0) {
-                        return processWord2(records, semicolon, pointer, word2, word1);
+                        final int pos;
+                        pos = semicolonPos(semicolon);
+                        // read temparature
+                        final int length = pos + 8;
+                        final long numberWord = getWord(pointer + length + 1);
+                        final int decimalPos = decimalPos(numberWord);
+                        final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                        final long word = partial(word2, pos); // last word
+                        putAndCollect(records, completeHash(word1, word), temp, pointer, length, word1, word, 0);
+
+                        return length + (decimalPos >>> 3) + 4; // seek to the line end
                     }
                     else {
-                        return processRest(records, word1, word2, semicolon, pointer);
+                        final int pos;
+                        long word = 0;
+                        int length = 16;
+                        long hash = appendHash(word1, word2);
+                        // Let the compiler know the loop size ahead
+                        // Then it's automatically unrolled
+                        // Max key length is 13 longs, 2 we've read before, 11 left
+                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                            if ((semicolon = hasSemicolon((word = getWord(pointer + length)))) != 0) {
+                                break;
+                            }
+                            hash = appendHash(hash, word);
+                            length += 8;
+                        }
+
+                        pos = semicolonPos(semicolon);
+                        length += pos;
+                        // read temparature
+                        final long numberWord = getWord(pointer + length + 1);
+                        final int decimalPos = decimalPos(numberWord);
+                        final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                        word = partial(word, pos); // last word
+                        putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
+
+                        return length + (decimalPos >>> 3) + 4; // seek to the line end
                     }
                 }
             }
@@ -608,10 +658,10 @@ public class CalculateAverage_yavuztas {
 
         // Based on @thomaswue's idea, to cut unmapping delay.
         // Strangely, unmapping delay doesn't occur on macOS/M1 however in Linux/AMD it's substantial - ~200ms
-        if (!isWorkerProcess(args)) {
-            runAsWorker();
-            return;
-        }
+        // if (!isWorkerProcess(args)) {
+        // runAsWorker();
+        // return;
+        // }
 
         var concurrency = 2 * Runtime.getRuntime().availableProcessors();
 
