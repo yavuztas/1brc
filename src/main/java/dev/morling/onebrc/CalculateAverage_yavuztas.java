@@ -408,17 +408,11 @@ public class CalculateAverage_yavuztas {
                 final long word1 = getWord(pointer);
                 final long semicolon1 = hasSemicolon(word1);
                 final Record record1 = findRecord(this.map, pointer, word1, semicolon1);
-                // read temparature
-                final long numberWord = getWord(pointer + record1.length + 1);
-                final int decimalPos = decimalPos(numberWord);
-                final int temp = convertIntoNumber(decimalPos, numberWord);
-                pointer += record1.length + (decimalPos >>> 3) + 4;
-
-                record1.collect(temp);
+                pointer += collectTemp(record1, pointer); // read temparature
             }
         }
 
-        static Record findRecord(RecordMap map, long pointer, long word, long hasSemicolon) {
+        private static Record findRecord(RecordMap map, long pointer, long word, long hasSemicolon) {
             if (hasSemicolon != 0) {
                 final int spos = semicolonPos(hasSemicolon);
                 word = partial(word, spos);
@@ -450,6 +444,13 @@ public class CalculateAverage_yavuztas {
                     return map.putOrGet(completeHash(hash, last), pointer, spos + length, word, next, last);
                 }
             }
+        }
+
+        private static int collectTemp(Record record, long pointer) {
+            final long numberWord = getWord(pointer + record.length + 1);
+            final int decimalPos = decimalPos(numberWord);
+            record.collect(convertIntoNumber(decimalPos, numberWord));
+            return record.length + (decimalPos >>> 3) + 4; // return pointer increment
         }
 
         // Hashes are calculated by a Mersenne Prime (1 << 7) -1
