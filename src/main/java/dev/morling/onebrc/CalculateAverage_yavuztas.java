@@ -44,8 +44,7 @@ public class CalculateAverage_yavuztas {
             final Field f = Unsafe.class.getDeclaredField("theUnsafe");
             f.setAccessible(true);
             return (Unsafe) f.get(null);
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
@@ -199,15 +198,13 @@ public class CalculateAverage_yavuztas {
                     final long read = processWord1(records, s, pointer1, word1);
                     totalRead += read;
                     pointer1 += read;
-                }
-                else {
+                } else {
                     final long word2 = getWord(pointer1 + 8);
                     if ((s = hasSemicolon(word2)) != 0) {
                         final long read = processWord2(records, s, pointer1, word2, word1);
                         totalRead += read;
                         pointer1 += read;
-                    }
-                    else {
+                    } else {
                         final long read = processRest(records, word1, word2, s, pointer1);
                         totalRead += read;
                         pointer1 += read;
@@ -460,15 +457,13 @@ public class CalculateAverage_yavuztas {
                     final long read = processWord1(records, s, pointer1, word1);
                     totalRead += read;
                     pointer1 += read;
-                }
-                else {
+                } else {
                     final long word2 = getWord(pointer1 + 8);
                     if ((s = hasSemicolon(word2)) != 0) {
                         final long read = processWord2(records, s, pointer1, word2, word1);
                         totalRead += read;
                         pointer1 += read;
-                    }
-                    else {
+                    } else {
                         final long read = processRest(records, word1, word2, s, pointer1);
                         totalRead += read;
                         pointer1 += read;
@@ -487,15 +482,13 @@ public class CalculateAverage_yavuztas {
                     final long read = processWord1(records, s2, pointer2, word12);
                     totalRead += read;
                     pointer2 += read;
-                }
-                else {
+                } else {
                     final long word2 = getWord(pointer2 + 8);
                     if ((s2 = hasSemicolon(word2)) != 0) {
                         final long read = processWord2(records, s2, pointer2, word2, word12);
                         totalRead += read;
                         pointer2 += read;
-                    }
-                    else {
+                    } else {
                         final long read = processRest(records, word12, word2, s2, pointer2);
                         totalRead += read;
                         pointer2 += read;
@@ -564,13 +557,11 @@ public class CalculateAverage_yavuztas {
             final long word1 = getWord(pointer);
             if ((semicolon = hasSemicolon(word1)) != 0) {
                 return processWord1(records, semicolon, pointer, word1);
-            }
-            else {
+            } else {
                 final long word2 = getWord(pointer + 8);
                 if ((semicolon = hasSemicolon(word2)) != 0) {
                     return processWord2(records, semicolon, pointer, word2, word1);
-                }
-                else {
+                } else {
                     return processRest(records, word1, word2, semicolon, pointer);
                 }
             }
@@ -616,10 +607,10 @@ public class CalculateAverage_yavuztas {
 
         // Based on @thomaswue's idea, to cut unmapping delay.
         // Strangely, unmapping delay doesn't occur on macOS/M1 however in Linux/AMD it's substantial - ~200ms
-        // if (!isWorkerProcess(args)) {
-        // runAsWorker();
-        // return;
-        // }
+        if (!isWorkerProcess(args)) {
+            runAsWorker();
+            return;
+        }
 
         var concurrency = 2 * Runtime.getRuntime().availableProcessors();
 
@@ -662,11 +653,9 @@ public class CalculateAverage_yavuztas {
             final RegionProcessor actor;
             if (regionPerThread == 1) {
                 actor = new RegionProcessor(regions[i]);
-            }
-            else if (regionPerThread == 2) {
+            } else if (regionPerThread == 2) {
                 actor = new DualRegionProcessor(regions[2 * i], regions[2 * i + 1]);
-            }
-            else { // 3 regions per processor
+            } else { // 3 regions per processor
                 actor = new MultiRegionProcessor(regions[3 * i], regions[3 * i + 1], regions[3 * i + 2]);
             }
             actor.start(); // start imeediately
