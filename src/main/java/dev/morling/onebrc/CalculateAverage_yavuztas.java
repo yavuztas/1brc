@@ -67,12 +67,24 @@ public class CalculateAverage_yavuztas {
         private final long word2;
         private final long wordLast;
         private final int hash;
+
         private Record next; // linked list to resolve hash collisions
 
         private int min; // calculations over int is faster than double, we convert to double in the end only once
         private int max;
         private long sum;
         private int count;
+
+        public Record(long start, int length, long word1, long word2, long wordLast, int hash) {
+            this.start = start;
+            this.length = length;
+            this.word1 = word1;
+            this.word2 = word2;
+            this.wordLast = wordLast;
+            this.hash = hash;
+            this.min = 999;
+            this.max = -999;
+        }
 
         public Record(long start, int length, long word1, long word2, long wordLast, int hash, int temp) {
             this.start = start;
@@ -212,6 +224,29 @@ public class CalculateAverage_yavuztas {
             existing.next = new Record(start, length, word1, word2, wordLast, hash, temp);
         }
 
+        private Record putOrGet(int hash, long start, int length, long word1, long word2, long wordLast) {
+            final int bucket = hashBucket(hash);
+            if (hasNoRecord(bucket)) {
+                return this.keys[bucket] = new Record(start, length, word1, word2, wordLast, hash);
+            }
+
+            Record existing = getRecord(bucket);
+            if (existing.equals(start, word1, word2, wordLast, length)) {
+                return existing;
+            }
+
+            // collision++;
+            // find possible slot by scanning the slot linked list
+            while (existing.next != null) {
+                if (existing.next.equals(start, word1, word2, wordLast, length)) {
+                    return existing.next;
+                }
+                existing = existing.next; // go on to next
+                // collision++;
+            }
+            return existing.next = new Record(start, length, word1, word2, wordLast, hash);
+        }
+
         private void putOrMerge(Record key) {
             final int bucket = hashBucket(key.hash);
             if (hasNoRecord(bucket)) {
@@ -298,8 +333,8 @@ public class CalculateAverage_yavuztas {
 
         private static final int MAX_INNER_LOOP_SIZE = 11;
 
-        @Override
-        public void run() {
+        // @Override
+        public void run2() {
             long pointer = this.startPos;
             final long size = pointer + this.size;
             while (pointer < size) { // line start
@@ -361,6 +396,58 @@ public class CalculateAverage_yavuztas {
 
                         pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                     }
+                }
+            }
+        }
+
+        @Override
+        public void run() {
+            long pointer = this.startPos;
+            final long size = pointer + this.size;
+            while (pointer < size) { // line start
+                final long word1 = getWord(pointer);
+                final long semicolon1 = hasSemicolon(word1);
+                final Record record1 = findRecord(this.map, pointer, word1, semicolon1);
+                // read temparature
+                final long numberWord = getWord(pointer + record1.length + 1);
+                final int decimalPos = decimalPos(numberWord);
+                final int temp = convertIntoNumber(decimalPos, numberWord);
+                pointer += record1.length + (decimalPos >>> 3) + 4;
+
+                record1.collect(temp);
+            }
+        }
+
+        static Record findRecord(RecordMap map, long pointer, long word, long hasSemicolon) {
+            if (hasSemicolon != 0) {
+                final int spos = semicolonPos(hasSemicolon);
+                word = partial(word, spos);
+                return map.putOrGet(completeHash(0, word), pointer, spos, word, 0, 0);
+            }
+            else {
+                long next = getWord(pointer + 8);
+                if ((hasSemicolon = hasSemicolon(next)) != 0) {
+                    final int spos = semicolonPos(hasSemicolon);
+                    next = partial(next, spos);
+                    return map.putOrGet(completeHash(word, next), pointer, spos + 8, word, 0, 0);
+                }
+                else {
+                    long last = 0; // last word
+                    int length = 16;
+                    long hash = appendHash(word, next);
+                    // Let the compiler know the loop size ahead
+                    // Then it's automatically unrolled
+                    // Max key length is 13 longs, 2 we've read before, 11 left
+                    for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                        if ((hasSemicolon = hasSemicolon(last = getWord(pointer + length))) != 0) {
+                            break;
+                        }
+                        hash = appendHash(hash, last);
+                        length += 8;
+                    }
+                    final int spos = semicolonPos(hasSemicolon);
+                    last = partial(last, spos);
+                    return map.putOrGet(completeHash(hash, last), pointer, spos + length, word, next, last);
                 }
             }
         }
