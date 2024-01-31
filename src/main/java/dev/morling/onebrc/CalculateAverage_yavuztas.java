@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class CalculateAverage_yavuztas {
@@ -301,12 +302,18 @@ public class CalculateAverage_yavuztas {
     // One actor for one thread, no synchronization
     private static final class RegionActor extends Thread {
 
-        private final long startPos; // start of region memory address
-        private final int size;
+        private static final int SEGMENT_SIZE = 1 << 21; // 2mb
+
+        private final long fileStart;
+        private final long fileEnd;
+        private long startPos; // start of region memory address
+        private int size;
 
         private final RecordMap map = new RecordMap();
 
-        public RegionActor(long startPos, int size) {
+        public RegionActor(long fileStart, long fileEnd, long startPos, int size) {
+            this.fileStart = fileStart;
+            this.fileEnd = fileEnd;
             this.startPos = startPos;
             this.size = size;
         }
@@ -400,58 +407,83 @@ public class CalculateAverage_yavuztas {
             }
         }
 
+        private static final AtomicLong counter = new AtomicLong(0);
+
         @Override
         public void run() {
-            // calculate bounderies
-            long pointer1 = this.startPos;
-            final long limit1;
-            long pointer2;
-            final long limit2 = pointer1 + this.size;
 
-            final int newPos = findClosestLineEnd(pointer1, this.size / 2);
-            if (newPos == 0) {
-                limit1 = pointer1 + this.size;
-            }
-            else {
-                limit1 = pointer1 + newPos;
-            }
-            pointer2 = limit1;
+            while (true) {
+                // steal a segment
+                long segmentIndex = counter.getAndIncrement();
+                this.startPos = this.fileStart + segmentIndex * SEGMENT_SIZE;
 
-            while (true) { // line start
-                if (pointer1 >= limit1) {
-                    break;
-                }
-                if (pointer2 >= limit2) {
-                    break;
+                if (this.startPos >= this.fileEnd) {
+                    return;
                 }
 
-                final long word1 = getWord(pointer1);
-                final long word2 = getWord(pointer2);
-                final long semicolon1 = hasSemicolon(word1);
-                final long semicolon2 = hasSemicolon(word2);
-                final Record record1 = findRecord(this.map, pointer1, word1, semicolon1);
-                final Record record2 = findRecord(this.map, pointer2, word2, semicolon2);
+                if (this.startPos == this.fileStart) {
+                    final long limit = Math.min(this.fileEnd, this.startPos + SEGMENT_SIZE);
+                    this.size = findClosestLineEnd(this.startPos, (int) (limit - this.startPos));
+                }
+                else {
+                    this.startPos += findClosestLineEnd(this.startPos - SEGMENT_SIZE, SEGMENT_SIZE) - SEGMENT_SIZE;
+                    final long limit = Math.min(this.fileEnd, this.startPos + SEGMENT_SIZE);
+                    this.size = findClosestLineEnd(this.startPos, (int) (limit - this.startPos));
+                }
 
-                // read temparature
-                pointer1 += collectTemp(record1, pointer1);
-                pointer2 += collectTemp(record2, pointer2);
+                // calculate bounderies to split parallel instructions
+                long pointer1 = this.startPos;
+                final long limit1;
+                long pointer2;
+                final long limit2 = pointer1 + this.size;
+
+                final int newPos = findClosestLineEnd(pointer1, this.size / 2);
+                if (newPos == 0) {
+                    limit1 = pointer1 + this.size;
+                }
+                else {
+                    limit1 = pointer1 + newPos;
+                }
+                pointer2 = limit1;
+
+                while (true) { // line start
+                    if (pointer1 >= limit1) {
+                        break;
+                    }
+                    if (pointer2 >= limit2) {
+                        break;
+                    }
+
+                    final long word1 = getWord(pointer1);
+                    final long word2 = getWord(pointer2);
+                    final long semicolon1 = hasSemicolon(word1);
+                    final long semicolon2 = hasSemicolon(word2);
+                    final Record record1 = findRecord(this.map, pointer1, word1, semicolon1);
+                    final Record record2 = findRecord(this.map, pointer2, word2, semicolon2);
+
+                    // read temparature
+                    pointer1 += collectTemp(record1, pointer1);
+                    pointer2 += collectTemp(record2, pointer2);
+                }
+
+                // process leftovers
+                while (pointer1 < limit1) {
+                    final long word = getWord(pointer1);
+                    final long semicolon = hasSemicolon(word);
+                    final Record record = findRecord(this.map, pointer1, word, semicolon);
+                    // read temparature
+                    pointer1 += collectTemp(record, pointer1);
+                }
+                while (pointer2 < limit2) {
+                    final long word = getWord(pointer2);
+                    final long semicolon = hasSemicolon(word);
+                    final Record record = findRecord(this.map, pointer2, word, semicolon);
+                    // read temparature
+                    pointer2 += collectTemp(record, pointer2);
+                }
+
             }
 
-            // process leftovers
-            while (pointer1 < limit1) {
-                final long word = getWord(pointer1);
-                final long semicolon = hasSemicolon(word);
-                final Record record = findRecord(this.map, pointer1, word, semicolon);
-                // read temparature
-                pointer1 += collectTemp(record, pointer1);
-            }
-            while (pointer2 < limit2) {
-                final long word = getWord(pointer2);
-                final long semicolon = hasSemicolon(word);
-                final Record record = findRecord(this.map, pointer2, word, semicolon);
-                // read temparature
-                pointer2 += collectTemp(record, pointer2);
-            }
         }
 
         private static Record findRecord(RecordMap map, long pointer, long word, long hasSemicolon) {
@@ -620,7 +652,7 @@ public class CalculateAverage_yavuztas {
             // shift position to back until we find a linebreak
             maxSize = findClosestLineEnd(memoryAddress + startPos, (int) maxSize);
 
-            final RegionActor region = (actors[i] = new RegionActor(memoryAddress + startPos, (int) maxSize));
+            final RegionActor region = (actors[i] = new RegionActor(memoryAddress, memoryAddress + fileSize, memoryAddress + startPos, (int) maxSize));
             region.start(); // start processing
 
             startPos += maxSize;
