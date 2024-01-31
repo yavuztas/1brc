@@ -222,7 +222,7 @@ public class CalculateAverage_yavuztas {
             final int pos;
             long word = 0;
             int length = 16;
-            long hash = appendHash(0, word1, word2);
+            long hash = appendHash(word1, word2);
             // Let the compiler know the loop size ahead
             // Then it's automatically unrolled
             // Max key length is 13 longs, 2 we've read before, 11 left
@@ -256,8 +256,8 @@ public class CalculateAverage_yavuztas {
             final int decimalPos = decimalPos(numberWord);
             final int temp = convertIntoNumber(decimalPos, numberWord);
 
-            word2 = partial(word2, pos); // last word
-            putAndCollect(records, completeHash(0, word1, word2), temp, pointer, length, word1, word2, 0);
+            final long word = partial(word2, pos); // last word
+            putAndCollect(records, completeHash(word1, word), temp, pointer, length, word1, word, 0);
 
             return length + (decimalPos >>> 3) + 4; // seek to the line end
         }
@@ -270,8 +270,8 @@ public class CalculateAverage_yavuztas {
             final int decimalPos = decimalPos(numberWord);
             final int temp = convertIntoNumber(decimalPos, numberWord);
 
-            word1 = partial(word1, pos); // last word
-            putAndCollect(records, completeHash(0, word1), temp, pointer, pos, word1, 0, 0);
+            final long word = partial(word1, pos); // last word
+            putAndCollect(records, completeHash(word), temp, pointer, pos, word, 0, 0);
 
             return pos + (decimalPos >>> 3) + 4;
         }
@@ -382,11 +382,11 @@ public class CalculateAverage_yavuztas {
 
         // Hashes are calculated by a Mersenne Prime (1 << 7) -1
         // This is faster than multiplication in some machines
-        static long appendHash(long hash, long word) {
+        private static long appendHash(long hash, long word) {
             return (hash << 7) - hash + word;
         }
 
-        static long appendHash(long hash, long word1, long word2) {
+        private static long appendHash(long hash, long word1, long word2) {
             hash = (hash << 7) - hash + word1;
             return (hash << 7) - hash + word2;
         }
@@ -400,7 +400,7 @@ public class CalculateAverage_yavuztas {
             return (int) (hash ^ (hash >>> 25));
         }
 
-        static int completeHash(long hash, long word1, long word2) {
+        private static int completeHash(long hash, long word1, long word2) {
             hash = (hash << 7) - hash + word1;
             hash = (hash << 7) - hash + word2;
             return (int) hash ^ (int) (hash >>> 25);
@@ -532,90 +532,48 @@ public class CalculateAverage_yavuztas {
             final long limit2 = this.region2.start + this.region2.size;
             final long limit3 = this.region3.start + this.region3.size;
 
-            int read;
-            long totalRead = 0;
-            final long limit = this.region.size + this.region2.size + this.region3.size;
-            while (totalRead < limit) {
-                read = processRegion(pointer1, limit1, records);
-                totalRead += read;
-                pointer1 += read;
+            while (true) {
+                // region boundary checks
+                if (pointer1 >= limit1)
+                    break;
+                if (pointer2 >= limit2)
+                    break;
+                if (pointer3 >= limit3)
+                    break;
 
-                read = processRegion(pointer2, limit2, records);
-                totalRead += read;
-                pointer2 += read;
-
-                read = processRegion(pointer3, limit3, records);
-                totalRead += read;
-                pointer3 += read;
+                pointer1 += processRegion(pointer1, records);
+                pointer2 += processRegion(pointer2, records);
+                pointer3 += processRegion(pointer3, records);
+            }
+            // process leftovers
+            while (pointer1 < limit1) {
+                pointer1 += processRegion(pointer1, records);
+            }
+            while (pointer2 < limit2) {
+                pointer2 += processRegion(pointer2, records);
+            }
+            while (pointer3 < limit3) {
+                pointer3 += processRegion(pointer3, records);
             }
 
             this.aggregations = records; // to expose records after the job is done
         }
 
-        private static int processRegion(long pointer, long limit, Record[] records) {
-            if (pointer < limit) { // region size check
-                long semicolon; // semicolon check word
-                final long word1 = getWord(pointer);
-                if ((semicolon = hasSemicolon(word1)) != 0) {
-                    final int pos;
-                    pos = semicolonPos(semicolon);
-                    // read temparature
-                    final long numberWord = getWord(pointer + pos + 1);
-                    final int decimalPos = decimalPos(numberWord);
-                    final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                    final long word = partial(word1, pos); // last word
-                    putAndCollect(records, completeHash(word), temp, pointer, pos, word, 0, 0);
-
-                    return pos + (decimalPos >>> 3) + 4;
+        private static int processRegion(long pointer, Record[] records) {
+            long semicolon; // semicolon check word
+            final long word1 = getWord(pointer);
+            if ((semicolon = hasSemicolon(word1)) != 0) {
+                return processWord1(records, semicolon, pointer, word1);
+            }
+            else {
+                final long word2 = getWord(pointer + 8);
+                if ((semicolon = hasSemicolon(word2)) != 0) {
+                    return processWord2(records, semicolon, pointer, word2, word1);
                 }
                 else {
-                    final long word2 = getWord(pointer + 8);
-                    if ((semicolon = hasSemicolon(word2)) != 0) {
-                        final int pos;
-                        pos = semicolonPos(semicolon);
-                        // read temparature
-                        final int length = pos + 8;
-                        final long numberWord = getWord(pointer + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        final long word = partial(word2, pos); // last word
-                        putAndCollect(records, completeHash(word1, word), temp, pointer, length, word1, word, 0);
-
-                        return length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                    else {
-                        final int pos;
-                        long word = 0;
-                        int length = 16;
-                        long hash = appendHash(word1, word2);
-                        // Let the compiler know the loop size ahead
-                        // Then it's automatically unrolled
-                        // Max key length is 13 longs, 2 we've read before, 11 left
-                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                            if ((semicolon = hasSemicolon((word = getWord(pointer + length)))) != 0) {
-                                break;
-                            }
-                            hash = appendHash(hash, word);
-                            length += 8;
-                        }
-
-                        pos = semicolonPos(semicolon);
-                        length += pos;
-                        // read temparature
-                        final long numberWord = getWord(pointer + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        word = partial(word, pos); // last word
-                        putAndCollect(records, completeHash(hash, word), temp, pointer, length, word1, word2, word);
-
-                        return length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
+                    return processRest(records, word1, word2, semicolon, pointer);
                 }
             }
-            return 0;
         }
 
     }
