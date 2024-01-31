@@ -521,13 +521,13 @@ public class CalculateAverage_yavuztas {
 
         private final Region region2;
         private final Region region3;
-        private final Region region4;
+        // private final Region region4;
 
-        public MultiRegionProcessor(Region region, Region region2, Region region3, Region region4) {
+        public MultiRegionProcessor(Region region, Region region2, Region region3) {
             super(region);
             this.region2 = region2;
             this.region3 = region3;
-            this.region4 = region4;
+            // this.region4 = region4;
         }
 
         @Override
@@ -703,8 +703,7 @@ public class CalculateAverage_yavuztas {
                 actor = new MultiRegionProcessor(
                         regions[regionPerThread * i],
                         regions[regionPerThread * i + 1],
-                        regions[regionPerThread * i + 2],
-                        null);
+                        regions[regionPerThread * i + 2]);
             }
             actor.start(); // start imeediately
             actors[i] = actor;
