@@ -402,13 +402,57 @@ public class CalculateAverage_yavuztas {
 
         @Override
         public void run() {
-            long pointer = this.startPos;
-            final long size = pointer + this.size;
-            while (pointer < size) { // line start
-                final long word1 = getWord(pointer);
+            // calculate bounderies
+            long pointer1 = this.startPos;
+            final long limit1;
+
+            long pointer2;
+            final long limit2 = pointer1 + this.size;
+
+            final int newPos = findClosestLineEnd(pointer1, this.size / 2);
+            if (newPos == 0) {
+                limit1 = pointer1 + this.size;
+                pointer2 = limit1;
+            }
+            else {
+                limit1 = pointer1 + newPos;
+                pointer2 = limit1;
+            }
+
+            while (true) { // line start
+                if (pointer1 >= limit1) {
+                    break;
+                }
+                if (pointer2 >= limit2) {
+                    break;
+                }
+
+                final long word1 = getWord(pointer1);
+                final long word2 = getWord(pointer2);
                 final long semicolon1 = hasSemicolon(word1);
-                final Record record1 = findRecord(this.map, pointer, word1, semicolon1);
-                pointer += collectTemp(record1, pointer); // read temparature
+                final long semicolon2 = hasSemicolon(word2);
+                final Record record1 = findRecord(this.map, pointer1, word1, semicolon1);
+                final Record record2 = findRecord(this.map, pointer2, word2, semicolon2);
+
+                // read temparature
+                pointer1 += collectTemp(record1, pointer1);
+                pointer2 += collectTemp(record2, pointer2);
+            }
+            // process leftovers
+            while (pointer1 < limit1) {
+                final long word = getWord(pointer1);
+                final long semicolon = hasSemicolon(word);
+                final Record record = findRecord(this.map, pointer1, word, semicolon);
+                // read temparature
+                pointer1 += collectTemp(record, pointer1);
+            }
+            // process leftovers
+            while (pointer2 < limit2) {
+                final long word = getWord(pointer2);
+                final long semicolon = hasSemicolon(word);
+                final Record record = findRecord(this.map, pointer2, word, semicolon);
+                // read temparature
+                pointer2 += collectTemp(record, pointer2);
             }
         }
 
@@ -514,11 +558,13 @@ public class CalculateAverage_yavuztas {
     /**
      * Scans the given buffer to the left
      */
-    private static long findClosestLineEnd(long start, int size) {
+    private static int findClosestLineEnd(long start, int size) {
         long position = start + size;
         while (UNSAFE.getByte(--position) != '\n') {
             // read until a linebreak
             size--;
+            if (size == 0) // no newline found
+                break;
         }
         return size;
     }
@@ -545,10 +591,10 @@ public class CalculateAverage_yavuztas {
 
         // Dased on @thomaswue's idea, to cut unmapping delay.
         // Strangely, unmapping delay doesn't occur on macOS/M1 however in Linux/AMD it's substantial - ~200ms
-        if (!isWorkerProcess(args)) {
-            runAsWorker();
-            return;
-        }
+        // if (!isWorkerProcess(args)) {
+        // runAsWorker();
+        // return;
+        // }
 
         var concurrency = 2 * Runtime.getRuntime().availableProcessors();
         final long fileSize = Files.size(FILE);
