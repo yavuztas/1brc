@@ -557,14 +557,21 @@ public class CalculateAverage_yavuztas {
                 final long word3 = region3.getWord();
                 // final long word4 = region4.getWord();
 
-                final Record record1 = findRecord(records, region1, word1, hasSemicolon(word1));
-                final Record record2 = findRecord(records, region2, word2, hasSemicolon(word2));
-                final Record record3 = findRecord(records, region3, word3, hasSemicolon(word3));
+                final long hasSemicolon1 = hasSemicolon(word1);
+                final long hasSemicolon2 = hasSemicolon(word2);
+                final long hasSemicolon3 = hasSemicolon(word3);
+
+                final Record record1 = findRecord(records, region1, word1, hasSemicolon1);
+                final Record record2 = findRecord(records, region2, word2, hasSemicolon2);
+                final Record record3 = findRecord(records, region3, word3, hasSemicolon3);
                 // final Record record4 = findRecord(records, region4, word4, hasSemicolon(word4));
 
-                record1.collect(getTemp(region1));
-                record2.collect(getTemp(region2));
-                record3.collect(getTemp(region3));
+                final int temp1 = getTemp(region1);
+                final int temp2 = getTemp(region2);
+                final int temp3 = getTemp(region3);
+                record1.collect(temp1);
+                record2.collect(temp2);
+                record3.collect(temp3);
                 // record4.collect(getTemp(region4));
             }
 
