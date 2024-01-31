@@ -521,11 +521,13 @@ public class CalculateAverage_yavuztas {
 
         private final Region region2;
         private final Region region3;
+        private final Region region4;
 
-        public MultiRegionProcessor(Region region, Region region2, Region region3) {
+        public MultiRegionProcessor(Region region, Region region2, Region region3, Region region4) {
             super(region);
             this.region2 = region2;
             this.region3 = region3;
+            this.region4 = region4;
         }
 
         @Override
@@ -533,37 +535,60 @@ public class CalculateAverage_yavuztas {
             // local vars is faster than field access, so we carried record array here
             final Record[] records = new Record[SIZE];
 
-            long pointer1 = this.region.start;
-            long pointer2 = this.region2.start;
-            long pointer3 = this.region3.start;
-
-            final long limit1 = this.region.limit;
-            final long limit2 = this.region2.limit;
-            final long limit3 = this.region3.limit;
+            // process 3 regions at once
+            final Region region1 = this.region;
+            final Region region2 = this.region2;
+            final Region region3 = this.region3;
+            // final Region region4 = this.region4;
 
             while (true) {
                 // region boundary checks
-                if (pointer1 >= limit1)
+                if (!region1.hasRemaining())
                     break;
-                if (pointer2 >= limit2)
+                if (!region2.hasRemaining())
                     break;
-                if (pointer3 >= limit3)
+                if (!region3.hasRemaining())
                     break;
+                // if (!region4.hasRemaining())
+                // break;
 
-                pointer1 += processRegion(pointer1, records);
-                pointer2 += processRegion(pointer2, records);
-                pointer3 += processRegion(pointer3, records);
+                final long word1 = region1.getWord();
+                final long word2 = region2.getWord();
+                final long word3 = region3.getWord();
+                // final long word4 = region4.getWord();
+
+                final Record record1 = findRecord(records, region1, word1, hasSemicolon(word1));
+                final Record record2 = findRecord(records, region2, word2, hasSemicolon(word2));
+                final Record record3 = findRecord(records, region3, word3, hasSemicolon(word3));
+                // final Record record4 = findRecord(records, region4, word4, hasSemicolon(word4));
+
+                record1.collect(getTemp(region1));
+                record2.collect(getTemp(region2));
+                record3.collect(getTemp(region3));
+                // record4.collect(getTemp(region4));
             }
+
             // process leftovers
-            while (pointer1 < limit1) {
-                pointer1 += processRegion(pointer1, records);
+            while (region1.hasRemaining()) {
+                final long word = region1.getWord();
+                final Record record = findRecord(records, region1, word, hasSemicolon(word));
+                record.collect(getTemp(region1));
             }
-            while (pointer2 < limit2) {
-                pointer2 += processRegion(pointer2, records);
+            while (region2.hasRemaining()) {
+                final long word = region2.getWord();
+                final Record record = findRecord(records, region2, word, hasSemicolon(word));
+                record.collect(getTemp(region2));
             }
-            while (pointer3 < limit3) {
-                pointer3 += processRegion(pointer3, records);
+            while (region3.hasRemaining()) {
+                final long word = region3.getWord();
+                final Record record = findRecord(records, region3, word, hasSemicolon(word));
+                record.collect(getTemp(region3));
             }
+            // while (region4.hasRemaining()) {
+            // final long word = region4.getWord();
+            // final Record record = findRecord(records, region4, word, hasSemicolon(word));
+            // record.collect(getTemp(region4));
+            // }
 
             this.aggregations = records; // to expose records after the job is done
         }
@@ -633,7 +658,7 @@ public class CalculateAverage_yavuztas {
         var concurrency = 2 * Runtime.getRuntime().availableProcessors();
 
         final long fileSize = Files.size(FILE);
-        int regionPerThread = 1;
+        int regionPerThread = 3;
         int regionCount = regionPerThread * concurrency;
         long regionSize = fileSize / regionCount;
 
@@ -675,7 +700,11 @@ public class CalculateAverage_yavuztas {
             }
             else {
                 // 3 regions per processor
-                actor = new MultiRegionProcessor(regions[3 * i], regions[3 * i + 1], regions[3 * i + 2]);
+                actor = new MultiRegionProcessor(
+                        regions[regionPerThread * i],
+                        regions[regionPerThread * i + 1],
+                        regions[regionPerThread * i + 2],
+                        null);
             }
             actor.start(); // start imeediately
             actors[i] = actor;
