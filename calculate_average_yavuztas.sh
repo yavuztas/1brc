@@ -15,11 +15,11 @@
 #  limitations under the License.
 #
 
-#if [ -f target/CalculateAverage_yavuztas_image ]; then
-#    echo "Picking up existing native image 'target/CalculateAverage_yavuztas_image', delete the file to select JVM mode." 1>&2
-#    target/CalculateAverage_yavuztas_image
-#else
+if [ -f target/CalculateAverage_yavuztas_image ]; then
+    echo "Picking up existing native image 'target/CalculateAverage_yavuztas_image', delete the file to select JVM mode." 1>&2
+    target/CalculateAverage_yavuztas_image
+else
     JAVA_OPTS="-XX:MaxGCPauseMillis=1 -XX:-AlwaysPreTouch -XX:+UseSerialGC -XX:+TieredCompilation --enable-preview"
     echo "Choosing to run the app in JVM mode as no native image was found, use prepare_yavuztas.sh to generate." 1>&2
-    time java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_yavuztas
-#fi
+    java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_yavuztas
+fi
