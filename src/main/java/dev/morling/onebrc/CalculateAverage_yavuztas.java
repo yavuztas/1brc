@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class CalculateAverage_yavuztas {
@@ -298,11 +299,10 @@ public class CalculateAverage_yavuztas {
 
         private static final int MAX_INNER_LOOP_SIZE = 11;
 
+//        private static final AtomicLong counter = new AtomicLong(0);
+
         @Override
         public void run() {
-            // long pointer = this.startPos;
-            // final long limit = pointer + this.size;
-
             // calculate bounderies to split parallel instructions
             long pointer1 = this.startPos;
             final long limit1;
@@ -325,20 +325,20 @@ public class CalculateAverage_yavuztas {
                 if (pointer2 >= limit2) {
                     break;
                 }
-                pointer1 = processLine(pointer1);
-                pointer2 = processLine(pointer2);
+                pointer1 = processLine(this.map, pointer1);
+                pointer2 = processLine(this.map, pointer2);
             }
 
             // process leftovers
             while (pointer1 < limit1) {
-                pointer1 = processLine(pointer1);
+                pointer1 = processLine(this.map, pointer1);
             }
             while (pointer2 < limit2) {
-                pointer2 = processLine(pointer2);
+                pointer2 = processLine(this.map, pointer2);
             }
         }
 
-        private long processLine(long pointer) {
+        private static long processLine(RecordMap map, long pointer) {
             long hash1 = 0; // reset hash
             long semicolon1; // semicolon check word
             final int pos1; // semicolon position
@@ -351,7 +351,7 @@ public class CalculateAverage_yavuztas {
                 final int temp = convertIntoNumber(decimalPos, numberWord);
 
                 word = partial(word, pos1); // last word
-                this.map.putAndCollect(completeHash(hash1, word), temp, pointer, pos1, word, 0, 0);
+                map.putAndCollect(completeHash(hash1, word), temp, pointer, pos1, word, 0, 0);
 
                 pointer += pos1 + (decimalPos >>> 3) + 4;
             }
@@ -366,7 +366,7 @@ public class CalculateAverage_yavuztas {
                     final int temp = convertIntoNumber(decimalPos, numberWord);
 
                     word2 = partial(word2, pos1); // last word
-                    this.map.putAndCollect(completeHash(hash1, word, word2), temp, pointer, length, word, word2, 0);
+                    map.putAndCollect(completeHash(hash1, word, word2), temp, pointer, length, word, word2, 0);
 
                     pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                 }
@@ -393,7 +393,7 @@ public class CalculateAverage_yavuztas {
                     final int temp = convertIntoNumber(decimalPos, numberWord);
 
                     last = partial(last, pos1); // last word
-                    this.map.putAndCollect(completeHash(hash1, last), temp, pointer, length, word, word2, last);
+                    map.putAndCollect(completeHash(hash1, last), temp, pointer, length, word, word2, last);
 
                     pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                 }
