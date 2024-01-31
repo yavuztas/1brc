@@ -319,260 +319,86 @@ public class CalculateAverage_yavuztas {
             pointer2 = limit1;
 
             while (true) { // line start
-
                 if (pointer1 >= limit1) {
                     break;
                 }
                 if (pointer2 >= limit2) {
                     break;
                 }
-
-                long hash1 = 0; // reset hash
-                long semicolon1; // semicolon check word
-                final int pos1; // semicolon position
-                long word = getWord(pointer1);
-                if ((semicolon1 = hasSemicolon(word)) != 0) {
-                    pos1 = semicolonPos(semicolon1);
-                    // read temparature
-                    final long numberWord = getWord(pointer1 + pos1 + 1);
-                    final int decimalPos = decimalPos(numberWord);
-                    final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                    word = partial(word, pos1); // last word
-                    this.map.putAndCollect(completeHash(hash1, word), temp, pointer1, pos1, word, 0, 0);
-
-                    pointer1 += pos1 + (decimalPos >>> 3) + 4;
-                }
-                else {
-                    long word2 = getWord(pointer1 + 8);
-                    if ((semicolon1 = hasSemicolon(word2)) != 0) {
-                        pos1 = semicolonPos(semicolon1);
-                        // read temparature
-                        final int length = pos1 + 8;
-                        final long numberWord = getWord(pointer1 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        word2 = partial(word2, pos1); // last word
-                        this.map.putAndCollect(completeHash(hash1, word, word2), temp, pointer1, length, word, word2, 0);
-
-                        pointer1 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                    else {
-                        long last = 0;
-                        int length = 16;
-                        hash1 = appendHash(hash1, word, word2);
-                        // Let the compiler know the loop size ahead
-                        // Then it's automatically unrolled
-                        // Max key length is 13 longs, 2 we've read before, 11 left
-                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                            if ((semicolon1 = hasSemicolon((last = getWord(pointer1 + length)))) != 0) {
-                                break;
-                            }
-                            hash1 = appendHash(hash1, last);
-                            length += 8;
-                        }
-
-                        pos1 = semicolonPos(semicolon1);
-                        length += pos1;
-                        // read temparature
-                        final long numberWord = getWord(pointer1 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        last = partial(last, pos1); // last word
-                        this.map.putAndCollect(completeHash(hash1, last), temp, pointer1, length, word, word2, last);
-
-                        pointer1 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                }
-
-                // process region2
-                long hash2 = 0; // reset hash
-                long semicolon2; // semicolon check word
-                final int pos2; // semicolon position
-                long word21 = getWord(pointer2);
-                if ((semicolon2 = hasSemicolon(word21)) != 0) {
-                    pos2 = semicolonPos(semicolon2);
-                    // read temparature
-                    final long numberWord = getWord(pointer2 + pos2 + 1);
-                    final int decimalPos = decimalPos(numberWord);
-                    final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                    word21 = partial(word21, pos2); // last word
-                    this.map.putAndCollect(completeHash(hash2, word21), temp, pointer2, pos2, word21, 0, 0);
-
-                    pointer2 += pos2 + (decimalPos >>> 3) + 4;
-                }
-                else {
-                    long word2 = getWord(pointer2 + 8);
-                    if ((semicolon2 = hasSemicolon(word2)) != 0) {
-                        pos2 = semicolonPos(semicolon2);
-                        // read temparature
-                        final int length = pos2 + 8;
-                        final long numberWord = getWord(pointer2 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        word2 = partial(word2, pos2); // last word
-                        this.map.putAndCollect(completeHash(hash2, word21, word2), temp, pointer2, length, word21, word2, 0);
-
-                        pointer2 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                    else {
-                        long last = 0;
-                        int length = 16;
-                        hash2 = appendHash(hash2, word21, word2);
-                        // Let the compiler know the loop size ahead
-                        // Then it's automatically unrolled
-                        // Max key length is 13 longs, 2 we've read before, 11 left
-                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                            if ((semicolon2 = hasSemicolon((last = getWord(pointer2 + length)))) != 0) {
-                                break;
-                            }
-                            hash2 = appendHash(hash2, last);
-                            length += 8;
-                        }
-
-                        pos2 = semicolonPos(semicolon2);
-                        length += pos2;
-                        // read temparature
-                        final long numberWord = getWord(pointer2 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        last = partial(last, pos2); // last word
-                        this.map.putAndCollect(completeHash(hash2, last), temp, pointer2, length, word21, word2, last);
-
-                        pointer2 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                }
-
+                pointer1 = processLine(pointer1);
+                pointer2 = processLine(pointer2);
             }
 
             // process leftovers
             while (pointer1 < limit1) {
-                long hash1 = 0; // reset hash
-                long semicolon1; // semicolon check word
-                final int pos1; // semicolon position
-                long word = getWord(pointer1);
-                if ((semicolon1 = hasSemicolon(word)) != 0) {
-                    pos1 = semicolonPos(semicolon1);
-                    // read temparature
-                    final long numberWord = getWord(pointer1 + pos1 + 1);
-                    final int decimalPos = decimalPos(numberWord);
-                    final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                    word = partial(word, pos1); // last word
-                    this.map.putAndCollect(completeHash(hash1, word), temp, pointer1, pos1, word, 0, 0);
-
-                    pointer1 += pos1 + (decimalPos >>> 3) + 4;
-                }
-                else {
-                    long word2 = getWord(pointer1 + 8);
-                    if ((semicolon1 = hasSemicolon(word2)) != 0) {
-                        pos1 = semicolonPos(semicolon1);
-                        // read temparature
-                        final int length = pos1 + 8;
-                        final long numberWord = getWord(pointer1 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        word2 = partial(word2, pos1); // last word
-                        this.map.putAndCollect(completeHash(hash1, word, word2), temp, pointer1, length, word, word2, 0);
-
-                        pointer1 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                    else {
-                        long last = 0;
-                        int length = 16;
-                        hash1 = appendHash(hash1, word, word2);
-                        // Let the compiler know the loop size ahead
-                        // Then it's automatically unrolled
-                        // Max key length is 13 longs, 2 we've read before, 11 left
-                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                            if ((semicolon1 = hasSemicolon((last = getWord(pointer1 + length)))) != 0) {
-                                break;
-                            }
-                            hash1 = appendHash(hash1, last);
-                            length += 8;
-                        }
-
-                        pos1 = semicolonPos(semicolon1);
-                        length += pos1;
-                        // read temparature
-                        final long numberWord = getWord(pointer1 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        last = partial(last, pos1); // last word
-                        this.map.putAndCollect(completeHash(hash1, last), temp, pointer1, length, word, word2, last);
-
-                        pointer1 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                }
+                pointer1 = processLine(pointer1);
             }
             while (pointer2 < limit2) {
-                long hash2 = 0; // reset hash
-                long semicolon2; // semicolon check word
-                final int pos2; // semicolon position
-                long word21 = getWord(pointer2);
-                if ((semicolon2 = hasSemicolon(word21)) != 0) {
-                    pos2 = semicolonPos(semicolon2);
+                pointer2 = processLine(pointer2);
+            }
+        }
+
+        private long processLine(long pointer) {
+            long hash1 = 0; // reset hash
+            long semicolon1; // semicolon check word
+            final int pos1; // semicolon position
+            long word = getWord(pointer);
+            if ((semicolon1 = hasSemicolon(word)) != 0) {
+                pos1 = semicolonPos(semicolon1);
+                // read temparature
+                final long numberWord = getWord(pointer + pos1 + 1);
+                final int decimalPos = decimalPos(numberWord);
+                final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                word = partial(word, pos1); // last word
+                this.map.putAndCollect(completeHash(hash1, word), temp, pointer, pos1, word, 0, 0);
+
+                pointer += pos1 + (decimalPos >>> 3) + 4;
+            }
+            else {
+                long word2 = getWord(pointer + 8);
+                if ((semicolon1 = hasSemicolon(word2)) != 0) {
+                    pos1 = semicolonPos(semicolon1);
                     // read temparature
-                    final long numberWord = getWord(pointer2 + pos2 + 1);
+                    final int length = pos1 + 8;
+                    final long numberWord = getWord(pointer + length + 1);
                     final int decimalPos = decimalPos(numberWord);
                     final int temp = convertIntoNumber(decimalPos, numberWord);
 
-                    word21 = partial(word21, pos2); // last word
-                    this.map.putAndCollect(completeHash(hash2, word21), temp, pointer2, pos2, word21, 0, 0);
+                    word2 = partial(word2, pos1); // last word
+                    this.map.putAndCollect(completeHash(hash1, word, word2), temp, pointer, length, word, word2, 0);
 
-                    pointer2 += pos2 + (decimalPos >>> 3) + 4;
+                    pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                 }
                 else {
-                    long word2 = getWord(pointer2 + 8);
-                    if ((semicolon2 = hasSemicolon(word2)) != 0) {
-                        pos2 = semicolonPos(semicolon2);
-                        // read temparature
-                        final int length = pos2 + 8;
-                        final long numberWord = getWord(pointer2 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        word2 = partial(word2, pos2); // last word
-                        this.map.putAndCollect(completeHash(hash2, word21, word2), temp, pointer2, length, word21, word2, 0);
-
-                        pointer2 += length + (decimalPos >>> 3) + 4; // seek to the line end
-                    }
-                    else {
-                        long last = 0;
-                        int length = 16;
-                        hash2 = appendHash(hash2, word21, word2);
-                        // Let the compiler know the loop size ahead
-                        // Then it's automatically unrolled
-                        // Max key length is 13 longs, 2 we've read before, 11 left
-                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                            if ((semicolon2 = hasSemicolon((last = getWord(pointer2 + length)))) != 0) {
-                                break;
-                            }
-                            hash2 = appendHash(hash2, last);
-                            length += 8;
+                    long last = 0;
+                    int length = 16;
+                    hash1 = appendHash(hash1, word, word2);
+                    // Let the compiler know the loop size ahead
+                    // Then it's automatically unrolled
+                    // Max key length is 13 longs, 2 we've read before, 11 left
+                    for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                        if ((semicolon1 = hasSemicolon((last = getWord(pointer + length)))) != 0) {
+                            break;
                         }
-
-                        pos2 = semicolonPos(semicolon2);
-                        length += pos2;
-                        // read temparature
-                        final long numberWord = getWord(pointer2 + length + 1);
-                        final int decimalPos = decimalPos(numberWord);
-                        final int temp = convertIntoNumber(decimalPos, numberWord);
-
-                        last = partial(last, pos2); // last word
-                        this.map.putAndCollect(completeHash(hash2, last), temp, pointer2, length, word21, word2, last);
-
-                        pointer2 += length + (decimalPos >>> 3) + 4; // seek to the line end
+                        hash1 = appendHash(hash1, last);
+                        length += 8;
                     }
+
+                    pos1 = semicolonPos(semicolon1);
+                    length += pos1;
+                    // read temparature
+                    final long numberWord = getWord(pointer + length + 1);
+                    final int decimalPos = decimalPos(numberWord);
+                    final int temp = convertIntoNumber(decimalPos, numberWord);
+
+                    last = partial(last, pos1); // last word
+                    this.map.putAndCollect(completeHash(hash1, last), temp, pointer, length, word, word2, last);
+
+                    pointer += length + (decimalPos >>> 3) + 4; // seek to the line end
                 }
             }
+            return pointer;
         }
 
         // Hashes are calculated by a Mersenne Prime (1 << 7) -1
