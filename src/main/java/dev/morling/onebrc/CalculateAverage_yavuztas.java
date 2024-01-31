@@ -44,7 +44,8 @@ public class CalculateAverage_yavuztas {
             final Field f = Unsafe.class.getDeclaredField("theUnsafe");
             f.setAccessible(true);
             return (Unsafe) f.get(null);
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
@@ -160,8 +161,28 @@ public class CalculateAverage_yavuztas {
         }
     }
 
-    private record Region(long start, int size) {
+    private static class Region {
+        long start;
+        long limit;
+        long position;
 
+        public Region(long start, long limit) {
+            this.start = start;
+            this.limit = limit;
+            this.position = start;
+        }
+
+        long position() {
+            return this.position;
+        }
+
+        void seek(int pos) {
+            this.position += pos;
+        }
+
+        boolean hasRemaining() {
+            return this.position < this.limit;
+        }
     }
 
     // One actor for one thread, no synchronization
@@ -188,31 +209,56 @@ public class CalculateAverage_yavuztas {
             final Record[] records = new Record[SIZE];
 
             // process single region
-            long totalRead = 0;
-            long pointer1 = this.region.start;
-            final long limit = this.region.size;
-            while (totalRead < limit) {
+            final Region region = this.region;
+
+            while (region.hasRemaining()) {
                 long s; // semicolon check word
-                final long word1 = getWord(pointer1);
+                final long pos = region.position();
+                final long word1 = getWord(pos);
                 if ((s = hasSemicolon(word1)) != 0) {
-                    final long read = processWord1(records, s, pointer1, word1);
-                    totalRead += read;
-                    pointer1 += read;
-                } else {
-                    final long word2 = getWord(pointer1 + 8);
+                    final int p = semicolonPos(s);
+                    final int temp = getTemp(region, p); // read temparature
+                    final long word = partial(word1, p); // last word
+                    putAndCollect(records, completeHash(word), temp, pos, p, word, 0, 0);
+                }
+                else {
+                    final long word2 = getWord(pos + 8);
                     if ((s = hasSemicolon(word2)) != 0) {
-                        final long read = processWord2(records, s, pointer1, word2, word1);
-                        totalRead += read;
-                        pointer1 += read;
-                    } else {
-                        final long read = processRest(records, word1, word2, s, pointer1);
-                        totalRead += read;
-                        pointer1 += read;
+                        final int p = semicolonPos(s);
+                        final int temp = getTemp(region, p + 8); // read temparature
+                        final long word = partial(word2, p); // last word
+                        putAndCollect(records, completeHash(word1, word), temp, pos, p + 8, word1, word, 0);
+                    }
+                    else {
+                        long word = 0;
+                        int length = 16;
+                        long hash = appendHash(word1, word2);
+                        // Let the compiler know the loop size ahead
+                        // Then it's automatically unrolled
+                        // Max key length is 13 longs, 2 we've read before, 11 left
+                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                            if ((s = hasSemicolon((word = getWord(pos + length)))) != 0) {
+                                break;
+                            }
+                            hash = appendHash(hash, word);
+                            length += 8;
+                        }
+                        final int p = semicolonPos(s);
+                        final int temp = getTemp(region, length + p); // read temparature
+                        word = partial(word, p); // last word
+                        putAndCollect(records, completeHash(hash, word), temp, pos, length + p, word1, word2, word);
                     }
                 }
             }
 
             this.aggregations = records; // to expose records after the job is done
+        }
+
+        static int getTemp(Region region, int semicolonPos) {
+            final long numberWord = getWord(region.position() + semicolonPos + 1);
+            final int decimalPos = decimalPos(numberWord);
+            region.seek(semicolonPos + (decimalPos >>> 3) + 4);
+            return convertIntoNumber(decimalPos, numberWord);
         }
 
         static int processRest(Record[] records, long word1, long word2, long s, long pointer) {
@@ -234,6 +280,7 @@ public class CalculateAverage_yavuztas {
             pos = semicolonPos(s);
             length += pos;
             // read temparature
+
             final long numberWord = getWord(pointer + length + 1);
             final int decimalPos = decimalPos(numberWord);
             final int temp = convertIntoNumber(decimalPos, numberWord);
@@ -405,7 +452,7 @@ public class CalculateAverage_yavuztas {
 
         // Credits to @merrykitty. Magical solution to parse temparature values branchless!
         // Taken as without modification, comments belong to @merrykitty
-        static int convertIntoNumber(int decimalSepPos, long numberWord) {
+        private static int convertIntoNumber(int decimalSepPos, long numberWord) {
             final int shift = 28 - decimalSepPos;
             // signed is -1 if negative, 0 otherwise
             final long signed = (~numberWord << 59) >> 63;
@@ -424,79 +471,6 @@ public class CalculateAverage_yavuztas {
             final long absValue = ((digits * 0x640a0001) >>> 32) & 0x3FF;
             final long value = (absValue ^ signed) - signed;
             return (int) value;
-        }
-
-    }
-
-    private static final class DualRegionProcessor extends RegionProcessor {
-
-        private final Region region2;
-
-        public DualRegionProcessor(Region region, Region region2) {
-            super(region);
-            this.region2 = region2;
-        }
-
-        @Override
-        public void run() {
-            // local vars is faster than field access, so we carried record array here
-            final Record[] records = new Record[SIZE];
-
-            long pointer1 = this.region.start;
-            long pointer2 = this.region2.start;
-
-            long pointer2Limit = this.region2.start + this.region2.size;
-
-            long totalRead = 0;
-            final long limit = this.region.size + this.region2.size;
-            while (totalRead < limit) {
-                // region 1
-                long s; // semicolon check word
-                final long word1 = getWord(pointer1);
-                if ((s = hasSemicolon(word1)) != 0) {
-                    final long read = processWord1(records, s, pointer1, word1);
-                    totalRead += read;
-                    pointer1 += read;
-                } else {
-                    final long word2 = getWord(pointer1 + 8);
-                    if ((s = hasSemicolon(word2)) != 0) {
-                        final long read = processWord2(records, s, pointer1, word2, word1);
-                        totalRead += read;
-                        pointer1 += read;
-                    } else {
-                        final long read = processRest(records, word1, word2, s, pointer1);
-                        totalRead += read;
-                        pointer1 += read;
-                    }
-                }
-
-                if (pointer2 + 8 > pointer2Limit) {
-                    System.out.println("pointer2 ends: " + (pointer2Limit - pointer2));
-                    break;
-                }
-
-                // region 2
-                long s2;
-                final long word12 = getWord(pointer2);
-                if ((s2 = hasSemicolon(word12)) != 0) {
-                    final long read = processWord1(records, s2, pointer2, word12);
-                    totalRead += read;
-                    pointer2 += read;
-                } else {
-                    final long word2 = getWord(pointer2 + 8);
-                    if ((s2 = hasSemicolon(word2)) != 0) {
-                        final long read = processWord2(records, s2, pointer2, word2, word12);
-                        totalRead += read;
-                        pointer2 += read;
-                    } else {
-                        final long read = processRest(records, word12, word2, s2, pointer2);
-                        totalRead += read;
-                        pointer2 += read;
-                    }
-                }
-            }
-
-            this.aggregations = records; // to expose records after the job is done
         }
 
     }
@@ -521,9 +495,9 @@ public class CalculateAverage_yavuztas {
             long pointer2 = this.region2.start;
             long pointer3 = this.region3.start;
 
-            final long limit1 = this.region.start + this.region.size;
-            final long limit2 = this.region2.start + this.region2.size;
-            final long limit3 = this.region3.start + this.region3.size;
+            final long limit1 = this.region.limit;
+            final long limit2 = this.region2.limit;
+            final long limit3 = this.region3.limit;
 
             while (true) {
                 // region boundary checks
@@ -557,11 +531,13 @@ public class CalculateAverage_yavuztas {
             final long word1 = getWord(pointer);
             if ((semicolon = hasSemicolon(word1)) != 0) {
                 return processWord1(records, semicolon, pointer, word1);
-            } else {
+            }
+            else {
                 final long word2 = getWord(pointer + 8);
                 if ((semicolon = hasSemicolon(word2)) != 0) {
                     return processWord2(records, semicolon, pointer, word2, word1);
-                } else {
+                }
+                else {
                     return processRest(records, word1, word2, semicolon, pointer);
                 }
             }
@@ -615,7 +591,7 @@ public class CalculateAverage_yavuztas {
         var concurrency = 2 * Runtime.getRuntime().availableProcessors();
 
         final long fileSize = Files.size(FILE);
-        int regionPerThread = 3;
+        int regionPerThread = 1;
         int regionCount = regionPerThread * concurrency;
         long regionSize = fileSize / regionCount;
 
@@ -643,7 +619,7 @@ public class CalculateAverage_yavuztas {
             long maxSize = (startPos + regionSize > fileSize) ? fileSize - startPos : regionSize;
             // shift position to back until we find a linebreak
             maxSize = findClosestLineEnd(memoryAddress + startPos, (int) maxSize);
-            regions[i] = new Region(memoryAddress + startPos, (int) maxSize);
+            regions[i] = new Region(memoryAddress + startPos, memoryAddress + startPos + maxSize);
 
             startPos += maxSize;
         }
@@ -652,10 +628,11 @@ public class CalculateAverage_yavuztas {
         for (int i = 0; i < concurrency; i++) {
             final RegionProcessor actor;
             if (regionPerThread == 1) {
+                // single region per processor
                 actor = new RegionProcessor(regions[i]);
-            } else if (regionPerThread == 2) {
-                actor = new DualRegionProcessor(regions[2 * i], regions[2 * i + 1]);
-            } else { // 3 regions per processor
+            }
+            else {
+                // 3 regions per processor
                 actor = new MultiRegionProcessor(regions[3 * i], regions[3 * i + 1], regions[3 * i + 2]);
             }
             actor.start(); // start imeediately
