@@ -28,7 +28,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.TreeMap;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class CalculateAverage_yavuztas {
@@ -68,24 +67,12 @@ public class CalculateAverage_yavuztas {
         private final long word2;
         private final long wordLast;
         private final int hash;
-
         private Record next; // linked list to resolve hash collisions
 
         private int min; // calculations over int is faster than double, we convert to double in the end only once
         private int max;
         private long sum;
         private int count;
-
-        public Record(long start, int length, long word1, long word2, long wordLast, int hash) {
-            this.start = start;
-            this.length = length;
-            this.word1 = word1;
-            this.word2 = word2;
-            this.wordLast = wordLast;
-            this.hash = hash;
-            this.min = 999;
-            this.max = -999;
-        }
 
         public Record(long start, int length, long word1, long word2, long wordLast, int hash, int temp) {
             this.start = start;
@@ -225,29 +212,6 @@ public class CalculateAverage_yavuztas {
             existing.next = new Record(start, length, word1, word2, wordLast, hash, temp);
         }
 
-        private Record putOrGet(int hash, long start, int length, long word1, long word2, long wordLast) {
-            final int bucket = hashBucket(hash);
-            if (hasNoRecord(bucket)) {
-                return this.keys[bucket] = new Record(start, length, word1, word2, wordLast, hash);
-            }
-
-            Record existing = getRecord(bucket);
-            if (existing.equals(start, word1, word2, wordLast, length)) {
-                return existing;
-            }
-
-            // collision++;
-            // find possible slot by scanning the slot linked list
-            while (existing.next != null) {
-                if (existing.next.equals(start, word1, word2, wordLast, length)) {
-                    return existing.next;
-                }
-                existing = existing.next; // go on to next
-                // collision++;
-            }
-            return existing.next = new Record(start, length, word1, word2, wordLast, hash);
-        }
-
         private void putOrMerge(Record key) {
             final int bucket = hashBucket(key.hash);
             if (hasNoRecord(bucket)) {
@@ -302,18 +266,12 @@ public class CalculateAverage_yavuztas {
     // One actor for one thread, no synchronization
     private static final class RegionActor extends Thread {
 
-        private static final int SEGMENT_SIZE = 1 << 21; // 2mb
-
-        private final long fileStart;
-        private final long fileEnd;
-        private long startPos; // start of region memory address
-        private int size;
+        private final long startPos; // start of region memory address
+        private final int size;
 
         private final RecordMap map = new RecordMap();
 
-        public RegionActor(long fileStart, long fileEnd, long startPos, int size) {
-            this.fileStart = fileStart;
-            this.fileEnd = fileEnd;
+        public RegionActor(long startPos, int size) {
             this.startPos = startPos;
             this.size = size;
         }
@@ -340,8 +298,8 @@ public class CalculateAverage_yavuztas {
 
         private static final int MAX_INNER_LOOP_SIZE = 11;
 
-        // @Override
-        public void run2() {
+        @Override
+        public void run() {
             long pointer = this.startPos;
             final long size = pointer + this.size;
             while (pointer < size) { // line start
@@ -407,126 +365,6 @@ public class CalculateAverage_yavuztas {
             }
         }
 
-        private static final AtomicLong counter = new AtomicLong(0);
-
-        @Override
-        public void run() {
-
-            while (true) {
-                // steal a segment
-                long segmentIndex = counter.getAndIncrement();
-                this.startPos = this.fileStart + segmentIndex * SEGMENT_SIZE;
-
-                if (this.startPos >= this.fileEnd) {
-                    return;
-                }
-
-                if (this.startPos == this.fileStart) {
-                    final long limit = Math.min(this.fileEnd, this.startPos + SEGMENT_SIZE);
-                    this.size = findClosestLineEnd(this.startPos, (int) (limit - this.startPos));
-                }
-                else {
-                    this.startPos += findClosestLineEnd(this.startPos - SEGMENT_SIZE, SEGMENT_SIZE) - SEGMENT_SIZE;
-                    final long limit = Math.min(this.fileEnd, this.startPos + SEGMENT_SIZE);
-                    this.size = findClosestLineEnd(this.startPos, (int) (limit - this.startPos));
-                }
-
-                // calculate bounderies to split parallel instructions
-                long pointer1 = this.startPos;
-                final long limit1;
-                long pointer2;
-                final long limit2 = pointer1 + this.size;
-
-                final int newPos = findClosestLineEnd(pointer1, this.size / 2);
-                if (newPos == 0) {
-                    limit1 = pointer1 + this.size;
-                }
-                else {
-                    limit1 = pointer1 + newPos;
-                }
-                pointer2 = limit1;
-
-                while (true) { // line start
-                    if (pointer1 >= limit1) {
-                        break;
-                    }
-                    if (pointer2 >= limit2) {
-                        break;
-                    }
-
-                    final long word1 = getWord(pointer1);
-                    final long word2 = getWord(pointer2);
-                    final long semicolon1 = hasSemicolon(word1);
-                    final long semicolon2 = hasSemicolon(word2);
-                    final Record record1 = findRecord(this.map, pointer1, word1, semicolon1);
-                    final Record record2 = findRecord(this.map, pointer2, word2, semicolon2);
-
-                    // read temparature
-                    pointer1 += collectTemp(record1, pointer1);
-                    pointer2 += collectTemp(record2, pointer2);
-                }
-
-                // process leftovers
-                while (pointer1 < limit1) {
-                    final long word = getWord(pointer1);
-                    final long semicolon = hasSemicolon(word);
-                    final Record record = findRecord(this.map, pointer1, word, semicolon);
-                    // read temparature
-                    pointer1 += collectTemp(record, pointer1);
-                }
-                while (pointer2 < limit2) {
-                    final long word = getWord(pointer2);
-                    final long semicolon = hasSemicolon(word);
-                    final Record record = findRecord(this.map, pointer2, word, semicolon);
-                    // read temparature
-                    pointer2 += collectTemp(record, pointer2);
-                }
-
-            }
-
-        }
-
-        private static Record findRecord(RecordMap map, long pointer, long word, long hasSemicolon) {
-            if (hasSemicolon != 0) {
-                final int spos = semicolonPos(hasSemicolon);
-                word = partial(word, spos);
-                return map.putOrGet(completeHash(0, word), pointer, spos, word, 0, 0);
-            }
-            else {
-                long next = getWord(pointer + 8);
-                if ((hasSemicolon = hasSemicolon(next)) != 0) {
-                    final int spos = semicolonPos(hasSemicolon);
-                    next = partial(next, spos);
-                    return map.putOrGet(completeHash(word, next), pointer, spos + 8, word, 0, 0);
-                }
-                else {
-                    long last = 0; // last word
-                    int length = 16;
-                    long hash = appendHash(word, next);
-                    // Let the compiler know the loop size ahead
-                    // Then it's automatically unrolled
-                    // Max key length is 13 longs, 2 we've read before, 11 left
-                    for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                        if ((hasSemicolon = hasSemicolon(last = getWord(pointer + length))) != 0) {
-                            break;
-                        }
-                        hash = appendHash(hash, last);
-                        length += 8;
-                    }
-                    final int spos = semicolonPos(hasSemicolon);
-                    last = partial(last, spos);
-                    return map.putOrGet(completeHash(hash, last), pointer, spos + length, word, next, last);
-                }
-            }
-        }
-
-        private static int collectTemp(Record record, long pointer) {
-            final long numberWord = getWord(pointer + record.length + 1);
-            final int decimalPos = decimalPos(numberWord);
-            record.collect(convertIntoNumber(decimalPos, numberWord));
-            return record.length + (decimalPos >>> 3) + 4; // return pointer increment
-        }
-
         // Hashes are calculated by a Mersenne Prime (1 << 7) -1
         // This is faster than multiplication in some machines
         private static long appendHash(long hash, long word) {
@@ -588,13 +426,11 @@ public class CalculateAverage_yavuztas {
     /**
      * Scans the given buffer to the left
      */
-    private static int findClosestLineEnd(long start, int size) {
+    private static long findClosestLineEnd(long start, int size) {
         long position = start + size;
         while (UNSAFE.getByte(--position) != '\n') {
             // read until a linebreak
             size--;
-            if (size == 0) // no newline found
-                break;
         }
         return size;
     }
@@ -652,7 +488,7 @@ public class CalculateAverage_yavuztas {
             // shift position to back until we find a linebreak
             maxSize = findClosestLineEnd(memoryAddress + startPos, (int) maxSize);
 
-            final RegionActor region = (actors[i] = new RegionActor(memoryAddress, memoryAddress + fileSize, memoryAddress + startPos, (int) maxSize));
+            final RegionActor region = (actors[i] = new RegionActor(memoryAddress + startPos, (int) maxSize));
             region.start(); // start processing
 
             startPos += maxSize;
