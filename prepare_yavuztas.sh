@@ -18,7 +18,7 @@
 source "$HOME/.sdkman/bin/sdkman-init.sh"
 sdk use java 21.0.2-graal 1>&2
 
-if [ ! -f target/CalculateAverage_yavuztas_image ]; then
-    NATIVE_IMAGE_OPTS="--initialize-at-build-time=dev.morling.onebrc.CalculateAverage_yavuztas -dsa --strict-image-heap --gc=epsilon -O3 -march=native -R:MaxHeapSize=128m -H:-GenLoopSafepoints --enable-preview"
-    native-image $NATIVE_IMAGE_OPTS -cp target/average-1.0.0-SNAPSHOT.jar -o target/CalculateAverage_yavuztas_image dev.morling.onebrc.CalculateAverage_yavuztas
-fi
+#if [ ! -f target/CalculateAverage_yavuztas_image ]; then
+#    NATIVE_IMAGE_OPTS="--initialize-at-build-time=dev.morling.onebrc.CalculateAverage_yavuztas -dsa --strict-image-heap --gc=epsilon -O3 -march=native -R:MaxHeapSize=128m -H:-GenLoopSafepoints --enable-preview"
+#    native-image $NATIVE_IMAGE_OPTS -cp target/average-1.0.0-SNAPSHOT.jar -o target/CalculateAverage_yavuztas_image dev.morling.onebrc.CalculateAverage_yavuztas
+#fi

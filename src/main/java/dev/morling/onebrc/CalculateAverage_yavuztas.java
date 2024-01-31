@@ -69,10 +69,19 @@ public class CalculateAverage_yavuztas {
         private final int hash;
         private Record next; // linked list to resolve hash collisions
 
-        private int min; // calculations over int is faster than double, we convert to double in the end only once
-        private int max;
+        private int min = 999; // calculations over int is faster than double, we convert to double in the end only once
+        private int max = -999;
         private long sum;
         private int count;
+
+        public Record(long start, int length, long word1, long word2, long wordLast, int hash) {
+            this.start = start;
+            this.length = length;
+            this.word1 = word1;
+            this.word2 = word2;
+            this.wordLast = wordLast;
+            this.hash = hash;
+        }
 
         public Record(long start, int length, long word1, long word2, long wordLast, int hash, int temp) {
             this.start = start;
@@ -183,6 +192,10 @@ public class CalculateAverage_yavuztas {
         boolean hasRemaining() {
             return this.position < this.limit;
         }
+
+        long getWord() {
+            return UNSAFE.getLong(this.position);
+        }
     }
 
     // One actor for one thread, no synchronization
@@ -212,52 +225,58 @@ public class CalculateAverage_yavuztas {
             final Region region = this.region;
 
             while (region.hasRemaining()) {
-                long s; // semicolon check word
-                final long pos = region.position();
-                final long word1 = getWord(pos);
-                if ((s = hasSemicolon(word1)) != 0) {
-                    final int p = semicolonPos(s);
-                    final int temp = getTemp(region, p); // read temparature
-                    final long word = partial(word1, p); // last word
-                    putAndCollect(records, completeHash(word), temp, pos, p, word, 0, 0);
-                }
-                else {
-                    final long word2 = getWord(pos + 8);
-                    if ((s = hasSemicolon(word2)) != 0) {
-                        final int p = semicolonPos(s);
-                        final int temp = getTemp(region, p + 8); // read temparature
-                        final long word = partial(word2, p); // last word
-                        putAndCollect(records, completeHash(word1, word), temp, pos, p + 8, word1, word, 0);
-                    }
-                    else {
-                        long word = 0;
-                        int length = 16;
-                        long hash = appendHash(word1, word2);
-                        // Let the compiler know the loop size ahead
-                        // Then it's automatically unrolled
-                        // Max key length is 13 longs, 2 we've read before, 11 left
-                        for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
-                            if ((s = hasSemicolon((word = getWord(pos + length)))) != 0) {
-                                break;
-                            }
-                            hash = appendHash(hash, word);
-                            length += 8;
-                        }
-                        final int p = semicolonPos(s);
-                        final int temp = getTemp(region, length + p); // read temparature
-                        word = partial(word, p); // last word
-                        putAndCollect(records, completeHash(hash, word), temp, pos, length + p, word1, word2, word);
-                    }
-                }
+                final long word = region.getWord();
+                final long hasSemicolon = hasSemicolon(word);
+                final Record record = findRecord(records, region, word, hasSemicolon);
+                final int temp = getTemp(region);
+                record.collect(temp);
             }
 
             this.aggregations = records; // to expose records after the job is done
         }
 
-        static int getTemp(Region region, int semicolonPos) {
-            final long numberWord = getWord(region.position() + semicolonPos + 1);
+        static Record findRecord(Record[] records, Region region, long word, long hasSemicolon) {
+            final long pos = region.position();
+            if (hasSemicolon != 0) {
+                final int spos = semicolonPos(hasSemicolon);
+                region.seek(spos); // seek to semicolon
+                word = partial(word, spos);
+                return getOrCreateRecord(records, completeHash(word), pos, spos, word, 0, 0);
+            }
+            else {
+                long next = getWord(pos + 8);
+                if ((hasSemicolon = hasSemicolon(next)) != 0) {
+                    final int spos = semicolonPos(hasSemicolon);
+                    region.seek(spos + 8); // seek to semicolon
+                    next = partial(next, spos);
+                    return getOrCreateRecord(records, completeHash(word, next), pos, spos + 8, word, 0, 0);
+                }
+                else {
+                    long last = 0; // last word
+                    int length = 16;
+                    long hash = appendHash(word, next);
+                    // Let the compiler know the loop size ahead
+                    // Then it's automatically unrolled
+                    // Max key length is 13 longs, 2 we've read before, 11 left
+                    for (int i = 0; i < MAX_INNER_LOOP_SIZE; i++) {
+                        if ((hasSemicolon = hasSemicolon(last = getWord(pos + length))) != 0) {
+                            break;
+                        }
+                        hash = appendHash(hash, last);
+                        length += 8;
+                    }
+                    final int spos = semicolonPos(hasSemicolon);
+                    region.seek(spos + length); // seek to semicolon
+                    last = partial(last, spos);
+                    return getOrCreateRecord(records, completeHash(hash, last), pos, spos + length, word, next, last);
+                }
+            }
+        }
+
+        static int getTemp(Region region) { // region pos + semicolonPos
+            final long numberWord = getWord(region.position() + 1);
             final int decimalPos = decimalPos(numberWord);
-            region.seek(semicolonPos + (decimalPos >>> 3) + 4);
+            region.seek((decimalPos >>> 3) + 4);
             return convertIntoNumber(decimalPos, numberWord);
         }
 
@@ -327,6 +346,29 @@ public class CalculateAverage_yavuztas {
         private static int hashBucket(int hash) {
             hash = hash ^ (hash >>> 16); // naive bit spreading but surprisingly decreases collision :)
             return hash & BITMASK; // fast modulo, to find bucket
+        }
+
+        static Record getOrCreateRecord(Record[] records, int hash, long start, int length, long word1, long word2, long wordLast) {
+            final int bucket = hashBucket(hash);
+            if (hasNoRecord(records, bucket)) {
+                return records[bucket] = new Record(start, length, word1, word2, wordLast, hash);
+            }
+
+            Record existing = records[bucket];
+            if (existing.equals(start, word1, word2, wordLast, length)) {
+                return existing;
+            }
+
+            // collision++;
+            // find possible slot by scanning the slot linked list
+            while (existing.next != null) {
+                if (existing.next.equals(start, word1, word2, wordLast, length)) {
+                    return existing.next;
+                }
+                existing = existing.next; // go on to next
+                // collision++;
+            }
+            return existing.next = new Record(start, length, word1, word2, wordLast, hash);
         }
 
         static void putAndCollect(Record[] records, int hash, int temp, long start, int length, long word1, long word2, long wordLast) {
