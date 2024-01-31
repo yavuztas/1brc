@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 #  Copyright 2023 The original authors
 #
@@ -15,9 +15,10 @@
 #  limitations under the License.
 #
 
-JAVA_OPTS="--enable-preview --add-modules=jdk.incubator.vector"
-JAVA_OPTS="$JAVA_OPTS -XX:-TieredCompilation"
-JAVA_OPTS="$JAVA_OPTS -XX:+UnlockExperimentalVMOptions -XX:+TrustFinalNonStaticFields"
-JAVA_OPTS="$JAVA_OPTS -XX:InlineSmallCode=15000 -XX:FreqInlineSize=400 -XX:MaxInlineSize=400"
-#JAVA_OPTS="$JAVA_OPTS -XX:+PrintCompilation -XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining"
-java $JAVA_OPTS --class-path target/average-1.0.0-SNAPSHOT.jar dev.morling.onebrc.CalculateAverage_plevart $*
+source "$HOME/.sdkman/bin/sdkman-init.sh"
+sdk use java 21.0.2-graal 1>&2
+
+if [ ! -f target/CalculateAverage_iziamos_image ]; then
+    NATIVE_IMAGE_OPTS="-H:+UnlockExperimentalVMOptions --gc=epsilon -O3 -march=native -R:MaxHeapSize=64m -H:-GenLoopSafepoints --enable-preview -H:InlineAllBonus=10 -H:-ParseRuntimeOptions --initialize-at-build-time=dev.morling.onebrc.CalculateAverage_iziamos"
+    native-image $NATIVE_IMAGE_OPTS -cp target/average-1.0.0-SNAPSHOT.jar -o target/CalculateAverage_iziamos_image dev.morling.onebrc.CalculateAverage_iziamos
+fi
