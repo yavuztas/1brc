@@ -405,19 +405,17 @@ public class CalculateAverage_yavuztas {
             // calculate bounderies
             long pointer1 = this.startPos;
             final long limit1;
-
             long pointer2;
             final long limit2 = pointer1 + this.size;
 
             final int newPos = findClosestLineEnd(pointer1, this.size / 2);
             if (newPos == 0) {
                 limit1 = pointer1 + this.size;
-                pointer2 = limit1;
             }
             else {
                 limit1 = pointer1 + newPos;
-                pointer2 = limit1;
             }
+            pointer2 = limit1;
 
             while (true) { // line start
                 if (pointer1 >= limit1) {
@@ -438,6 +436,7 @@ public class CalculateAverage_yavuztas {
                 pointer1 += collectTemp(record1, pointer1);
                 pointer2 += collectTemp(record2, pointer2);
             }
+
             // process leftovers
             while (pointer1 < limit1) {
                 final long word = getWord(pointer1);
@@ -446,7 +445,6 @@ public class CalculateAverage_yavuztas {
                 // read temparature
                 pointer1 += collectTemp(record, pointer1);
             }
-            // process leftovers
             while (pointer2 < limit2) {
                 final long word = getWord(pointer2);
                 final long semicolon = hasSemicolon(word);
@@ -591,10 +589,10 @@ public class CalculateAverage_yavuztas {
 
         // Dased on @thomaswue's idea, to cut unmapping delay.
         // Strangely, unmapping delay doesn't occur on macOS/M1 however in Linux/AMD it's substantial - ~200ms
-        // if (!isWorkerProcess(args)) {
-        // runAsWorker();
-        // return;
-        // }
+        if (!isWorkerProcess(args)) {
+            runAsWorker();
+            return;
+        }
 
         var concurrency = 2 * Runtime.getRuntime().availableProcessors();
         final long fileSize = Files.size(FILE);
